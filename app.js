@@ -28,7 +28,7 @@ const slash = s => s ? s.replace(/-/g, '/') : '—';
 const initial = () => ({
   version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
   crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {},
-  days: [], active: [], dayCount: {}, bestStreak: 0, lastSection: null, updatedAt: 0
+  days: [], active: [], dayCount: {}, dailyDone: [], bestStreak: 0, lastSection: null, updatedAt: 0
 });
 function normalize(obj) {
   const s = { ...initial(), ...(obj || {}) };
@@ -42,7 +42,7 @@ const uniq = a => [...new Set(a)].sort();
 function mergeState(a, b) {
   const [newer, older] = (a.updatedAt || 0) >= (b.updatedAt || 0) ? [a, b] : [b, a];
   const m = { ...older, ...newer };
-  for (const k of ['cleared', 'read', 'days', 'active']) m[k] = uniq([...(a[k] || []), ...(b[k] || [])]);
+  for (const k of ['cleared', 'read', 'days', 'active', 'dailyDone']) m[k] = uniq([...(a[k] || []), ...(b[k] || [])]);
   m.boss = [...new Set([...(a.boss || []), ...(b.boss || [])])].sort((x, y) => x - y);
   m.history = { ...older.history };
   for (const [id, h] of Object.entries(newer.history || {})) {
@@ -272,7 +272,7 @@ function home() {
       <div class="stat"><b class="dot">${state.cleared.length}<i>/36</i></b><small>節クリア</small></div>
     </div>
   </section>
-  <button class="button pop full" id="start-daily">${doneToday ? ic('check') : ''}今日はこれだけ（10問）</button>
+  <button class="button pop full" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ''}今日はこれだけ（10問）</button>
   <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
   <section class="panel strong">
     <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
@@ -443,7 +443,7 @@ function quizFinish() {
     if (pass && !has(state.cleared, qz.section)) { state.cleared.push(qz.section); msg = '節クリア！次の節がひらいたよ'; }
     else if (!pass) msg = '3問正解でクリア';
   }
-  if (qz.mode === 'daily') { markStreakDay(); msg = `連続 ${streak()}日`; }
+  if (qz.mode === 'daily') { if (!state.dailyDone.includes(today())) state.dailyDone.push(today()); markStreakDay(); msg = `連続 ${streak()}日`; }
   save();
   quiz = null; page = 'finish'; try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
