@@ -615,7 +615,7 @@ async function loadContent() {
   let key = lsGet('qc-key');
   const tok = lsGet('kh-token');
   if (!key && tok) {
-    try { const j = await (await fetch(KH_API, { method: 'POST', body: JSON.stringify({ token: tok, fn: '__boot' }) })).json(); if (j.ok && j.v && j.v.qcKey) { key = j.v.qcKey; lsSet('qc-key', key); } } catch (_) {}
+    try { const j = await (await fetch(KH_API, { method: 'POST', body: JSON.stringify({ token: tok, fn: '__boot' }) })).json(); DIAG.boot = j.ok ? 'ok / qcKey ' + (j.v && j.v.qcKey ? 'あり' : 'なし') : 'NG ' + (j.error || ''); if (j.ok && j.v && j.v.qcKey) { key = j.v.qcKey; lsSet('qc-key', key); } } catch (e) { DIAG.boot = '通信エラー ' + e.message; }
   }
   if (!key) return null;
   try {
@@ -623,8 +623,9 @@ async function loadContent() {
     const raw = Uint8Array.from(atob(key), c => c.charCodeAt(0));
     const k = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
     return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, k, buf.slice(12))));
-  } catch (_) { lsSet('qc-key', null); return null; }
+  } catch (e) { DIAG.decrypt = '復号エラー ' + (e.name || e.message); lsSet('qc-key', null); return null; }
 }
+const DIAG = {};
 
 async function boot() {
   $('modal-close').onclick = closeModal;
@@ -634,7 +635,8 @@ async function boot() {
   DATA = await loadContent();
   if (!DATA) {
     const hasTok = !!lsGet('kh-token');
-    const showLogin = () => { $('app').innerHTML = `<div class="panel"><h2>${hasTok ? '中身を開けませんでした' : 'ログインしてね'}</h2>${hasTok ? '<p class="muted">合言葉はあるが鍵を受け取れませんでした。もう一度ログインしてください</p>' : ''}${loginBox()}</div>`; bindLogin(); chrome(); };
+    const diag = `<p class="muted">確認用：合言葉 ${hasTok ? 'あり' : 'なし'} ／ 鍵 ${DIAG.boot || '未取得'}${DIAG.decrypt ? ' ／ ' + esc(DIAG.decrypt) : ''}</p>`;
+    const showLogin = () => { $('app').innerHTML = `<div class="panel"><h2>${hasTok ? '中身を開けませんでした' : 'ログインしてね'}</h2>${hasTok ? '<p class="muted">合言葉はあるが鍵を受け取れませんでした。もう一度ログインしてください</p>' : ''}${loginBox()}${diag}</div>`; bindLogin(); chrome(); };
     document.querySelectorAll('.bottom-nav button').forEach(b => b.onclick = showLogin);
     $('sync-btn').onclick = showLogin;
     showLogin(); return;
