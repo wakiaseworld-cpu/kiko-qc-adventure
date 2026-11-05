@@ -633,8 +633,11 @@ async function boot() {
   $('sync-btn').onclick = () => setPage('settings');
   DATA = await loadContent();
   if (!DATA) {
-    $('app').innerHTML = `<div class="panel"><h2>ログインしてね</h2>${loginBox()}</div>`;
-    bindLogin(); chrome(); return;
+    const hasTok = !!lsGet('kh-token');
+    const showLogin = () => { $('app').innerHTML = `<div class="panel"><h2>${hasTok ? '中身を開けませんでした' : 'ログインしてね'}</h2>${hasTok ? '<p class="muted">合言葉はあるが鍵を受け取れませんでした。もう一度ログインしてください</p>' : ''}${loginBox()}</div>`; bindLogin(); chrome(); };
+    document.querySelectorAll('.bottom-nav button').forEach(b => b.onclick = showLogin);
+    $('sync-btn').onclick = showLogin;
+    showLogin(); return;
   }
   SECS = DATA.sections; CHAPS = DATA.chapters;
   render();
