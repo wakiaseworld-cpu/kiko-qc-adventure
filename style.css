@@ -1,7 +1,7 @@
 /* キコハウスに合わせた見た目 */
 :root{
   --bg:#d6e9cf;--surface:#fff;--soft:#f4f6fa;--fg:#1b2433;--muted:#5f6b7e;--line:#d5dbe5;--outline:#2a201c;
-  --ink:#1f3a5f;--ink-fg:#fff;--stamp:#d2453f;--good:#2e7d4f;--good-bg:#e5f3ea;--mark:#f9e08b;--bad:#b3403a;--bad-bg:#fbe9e7;
+  --ink:#1f3a5f;--ink-fg:#fff;--stamp:#d2453f;--good:#2e7d4f;--good-bg:#e5f3ea;--mark:#f9e08b;--accent:#1b78a3;--bad:#b3403a;--bad-bg:#fbe9e7;
   --sun:#fff3c9;--rpg:#3f6e51;--rpg-fg:#f6ead2;--sand:#e3cfa0;--sand2:#d2b97f;--spot:rgba(110,64,52,.08);--pop:#e8546a;
   --night:#5f7f66;--night-fg:#f3f7ee;
   --dot:"DotGothic16","Zen Kaku Gothic New",monospace;
@@ -10,7 +10,7 @@
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#1c2a21;--surface:#18202b;--soft:#1d2633;--fg:#e6ebf2;--muted:#98a3b5;--line:#2c3747;--outline:#0c0a09;
-  --ink:#9cc0ee;--ink-fg:#0f1620;--stamp:#ff8f86;--good:#7fd19c;--good-bg:#1a3326;--mark:rgba(242,201,76,.38);--bad:#f08a80;--bad-bg:#3a1f1d;
+  --ink:#9cc0ee;--ink-fg:#0f1620;--stamp:#ff8f86;--good:#7fd19c;--good-bg:#1a3326;--mark:rgba(242,201,76,.38);--accent:#7cc7e8;--bad:#f08a80;--bad-bg:#3a1f1d;
   --sun:#3a3115;--rpg:#2c5139;--sand:#5a4a30;--sand2:#4a3c26;--spot:rgba(244,231,234,.05);--night:#13201a;--night-fg:#e6efe2;color-scheme:dark}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.7;font-variant-numeric:tabular-nums;-webkit-tap-highlight-color:transparent}
@@ -111,7 +111,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .reading .summary,.summary{background:var(--good-bg);border-radius:10px;padding:10px 12px;margin:10px 0}
 .summary p{margin:3px 0;font-size:.92rem;display:flex;align-items:flex-start}
 .summary p .ic{margin-top:.2em}
-.lesson-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.92rem;line-height:1.85;margin:12px 0}
+.lesson-text{overflow-wrap:anywhere;font-size:.92rem;line-height:1.85;margin:12px 0}
 .lesson-text .h{display:block;margin-top:10px;font-family:var(--dot);font-weight:400;color:var(--good)}
 
 /* クイズ */
@@ -167,6 +167,25 @@ body[data-page=home] .gkiko{display:none}
 /* 改行：短い言葉は途中で切らない */
 body{line-break:strict;text-wrap:pretty}
 h1,h2,h3,button,.pill,.tag,.label,.tile small,.kbub,.room-stats span,.muted{word-break:keep-all;overflow-wrap:anywhere}
-p,li,.choice,.explain{word-break:auto-phrase}
+.choice,.explain p{word-break:auto-phrase}
+.lesson-text,.excard,.lesson-text p{word-break:normal}
 .nb{white-space:nowrap}
-.kw{font-weight:700;color:var(--fg);background:linear-gradient(transparent 58%,var(--mark) 58%);padding:0 1px}
+.excard{background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin:6px 0 10px;line-height:1.7}
+.excard p{margin:2px 0 8px}
+.exa{border-top:1px dashed var(--line);padding-top:6px}
+.exdone{color:var(--good);font-weight:700;font-size:.85rem}
+/* テキストのメリハリ */
+.lesson-text p{margin:0 0 .6em}
+.lesson-text .tab{margin:24px 0 10px;border-bottom:3px solid var(--accent);font-size:1rem;line-height:1}
+.lesson-text .tab:first-child{margin-top:8px}
+.tab span{display:inline-block;background:var(--accent);color:var(--surface);padding:6px 12px 4px;font-weight:700}
+.pt{margin:0 0 12px}
+.pt-h{display:block;color:var(--accent);font-size:1.02rem;margin-bottom:1px}
+.pt-h::before{content:"";display:inline-block;width:8px;height:8px;background:var(--accent);margin-right:6px;vertical-align:.15em}
+.pt p{margin:0;padding-left:14px}
+.kw{color:var(--accent);font-weight:700}
+.imp{font-weight:700;text-decoration:underline;text-decoration-color:var(--accent);text-decoration-thickness:2px;text-underline-offset:4px}
+.ans-h{display:inline-block;background:var(--fg);color:var(--surface);font-size:.75rem;padding:0 6px;border-radius:4px;margin-right:6px;vertical-align:.1em}
+.exq{display:flex;gap:8px;align-items:flex-start}
+.exq p{margin:0 0 8px}
+.qno{color:var(--accent);font-size:1.25rem;line-height:1.3;flex:none}

@@ -115,7 +115,24 @@ const chapterLabel = chs => chs ? '第' + chs.join('・') + '章' : '全章';
 // ---------- ヘルパー ----------
 const has = (arr, k) => arr.includes(k);
 const secBy = id => SECS.find(s => s.id === id);
-const qBy = id => { for (const s of SECS) { const q = s.questions.find(q => q.id === id); if (q) return { ...q, section: s }; } return null; };
+const qBy = id => { for (const s of SECS) { const q = s.questions.find(q => q.id === id) || examplesOf(s).find(q => q.id === id); if (q) return { ...q, section: s }; } return null; };
+// 例題：本文の「例題」の部分から取り出す（問題文＝最初の段落、答え＝残り）
+function splitText(s) {
+  const t = s.text.replace(/\u200b/g, ''), a = t.search(/^例題$/m);
+  if (a < 0) return { before: t, ex: '', after: '' };
+  const rest = t.slice(a), b = rest.search(/^(練習問題|答えと解説)$/m);
+  return { before: t.slice(0, a), ex: b < 0 ? rest : rest.slice(0, b), after: b < 0 ? '' : rest.slice(b) };
+}
+function examplesOf(s) {
+  if (s._ex) return s._ex;
+  const parts = splitText(s).ex.split(/^(?=例題\d+：)/m).filter(x => /^例題\d+：/.test(x));
+  return (s._ex = parts.map(x => {
+    const n = +x.match(/^例題(\d+)/)[1], body = x.replace(/^例題\d+：/, '').trim();
+    const i = body.search(/\n\s*\n/), stem = i < 0 ? body : body.slice(0, i), ans = i < 0 ? '' : body.slice(i).trim().replace(/^答え：/, '');
+    return { id: `${s.id}-ex${n}`, n, example: true, stem, ans, answer: 0, options: [] };
+  }));
+}
+const isEx = id => /-ex\d+$/.test(id);
 const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const chTitle = id => CHAPS.find(c => c.id === id)?.title || '';
 function level() { let l = 1, t = 0, step = 20; while (t + step <= state.crickets) { t += step; l++; step += 10; } return { level: l, base: t, next: t + step }; }
@@ -268,27 +285,40 @@ function openLesson(id, showText = false) {
 }
 
 // ---------- 節 ----------
-function fmtText(raw) {
+function fmtText(raw, inline) {
   const w = l => [...l].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 0.5 : 1), 0);
+  const HEAD = /^(解説|例題|練習問題|答えと解説)$/;
   const out = [];
-  for (let l of raw.replace(/​/g, '').split('\n')) {
+  for (let l of raw.replace(/\u200b/g, '').split('\n')) {
     l = l.replace(/^●\s+/, '● ');
     const prev = out[out.length - 1];
-    if (prev && prev.trim() && l.trim() && !/^\s*●/.test(l) && !/^(解説|例題|練習問題|答えと解説)$/.test(prev) &&
+    if (prev && prev.trim() && l.trim() && !/^\s*●/.test(l) && !HEAD.test(prev) &&
       (/^\s{2,}/.test(l) || (w(prev) >= 39 && !/[。：]$/.test(prev) && !/^(答え|例題|解説|練習問題|問\d|\(\d|（\d)/.test(l)))) {
       out[out.length - 1] = prev + l.trim();
     } else out.push(l);
   }
   const NG = /^(何|それぞれ何|これ|それ|この|こう|そう)$/;
-  return out.join('\n')
-    .replace(/^● ([^：\n]{1,30})：/gm, '● <b class="kw">$1</b>：')
+  const kw = t => t
+    .replace(/[^。]*?(大切|重要|前提|ポイント)[^。]*。/g, m => `<span class="imp">${m}</span>`)
     .replace(/「([^「」\n]{2,20})」(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, '「<b class="kw">$1</b>」')
     .replace(/([^\s、。をはがにでも「」：>]{2,20}?)(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, (m, t) => NG.test(t) || /^[）)れ]/.test(t) || /→|ほしい|する$|書く/.test(t) || (t.split('（').length !== t.split('）').length) || t.includes('<') ? m : `<b class="kw">${t}</b>`);
+  if (inline) return raw.replace(/\u200b/g, '').split(/\n\s*\n/).map(b => kw(b.split('\n').map(x => x.trim()).join(''))).filter(Boolean).join('<br>');
+  return out.map(l => {
+    const t = l.trim(); if (!t) return '';
+    if (HEAD.test(t)) return `<h4 class="tab"><span>${t}</span></h4>`;
+    let m = t.match(/^● ([^：]{1,30})：(.*)$/);
+    if (m) return `<div class="pt"><b class="pt-h">${m[1]}</b><p>${kw(m[2])}</p></div>`;
+    if ((m = t.match(/^● (.*)$/))) return `<div class="pt"><p>${kw(m[1])}</p></div>`;
+    if ((m = t.match(/^答え：(.*)$/))) return `<p class="ans"><b class="ans-h">答え</b>${kw(m[1])}</p>`;
+    return `<p>${kw(t)}</p>`;
+  }).join('');
 }
 function lesson() {
   const s = secBy(sectionId); if (!s) return setPage('map');
   const open = unlockedSec(s);
-  const body = fmtText(esc(s.text)).replace(/^(解説|例題|練習問題|答えと解説)$/gm, '<b class="h">$1</b>');
+  const hd = t => fmtText(esc(t));
+  const parts = splitText(s), exs = examplesOf(s);
+  const body = hd(parts.before) + (exs.length ? '<h4 class="tab"><span>例題</span></h4>' + exs.map(e => `<div class="excard" data-ex="${e.id}"><div class="exq"><b class="qno">例${e.n}</b><p>${fmtText(esc(e.stem), 1)}</p></div><button class="mini full" data-peek>答えを見る</button><div class="exa" hidden><p><b class="ans-h">答え</b>${fmtText(esc(e.ans), 1)}</p><div class="button-row"><button class="button secondary" data-grade="1">わかった</button><button class="button" data-grade="0">まちがえた</button></div></div></div>`).join('') : hd(parts.ex)) + hd(parts.after);
   main(`<div class="reading">
     <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
     <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">' + ic('check') + '</span>' : ''}</div>
@@ -303,6 +333,10 @@ function lesson() {
     if (!el.hidden && !has(state.read, s.id)) { state.read.push(s.id); save(); }
     $('toggle-text').innerHTML = ic('book') + (el.hidden ? '読む' : '閉じる');
   };
+  document.querySelectorAll('.excard').forEach(c => {
+    c.querySelector('[data-peek]').onclick = e => { e.target.remove(); c.querySelector('.exa').hidden = false; };
+    c.querySelectorAll('[data-grade]').forEach(b => b.onclick = () => { const ok = b.dataset.grade === '1'; reward(c.dataset.ex, ok); b.parentNode.outerHTML = `<p class="exdone">${ok ? ic('check') + 'OK' : ic('loop') + '復習ボックスに入れました'}</p>`; });
+  });
   $('stage-quiz').onclick = () => startQuiz(s.questions.map(q => ({ ...q, section: s })), 'stage', s.id);
   const i = SECS.findIndex(a => a.id === s.id);
   $('prev-section').disabled = i === 0;
@@ -324,6 +358,7 @@ const modeLabel = m => (ic({ boss: 'crown', daily: 'sun', review: 'loop', stage:
 function quizView() {
   if (!quiz) return setPage('home');
   const q = quiz.questions[quiz.index]; if (!q) return quizFinish();
+  if (q.example) return exampleView(q);
   const show = quiz.answered, ok = quiz.answer === q.answer, s = q.section;
   const choices = q.options.map((opt, i) => `<button class="choice ${show ? (i === q.answer ? 'correct' : i === quiz.answer ? 'wrong' : '') : ''}" data-answer="${i}" ${show ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(opt)}</button>`).join('');
   main(`<div class="section-top"><div><div class="label">${modeLabel(quiz.mode)}</div><h2>${q.drill ? ic('calc') + '計算' : esc(s.title)}</h2></div><span class="pill">${quiz.index + 1}/${quiz.questions.length}</span></div>
@@ -340,6 +375,21 @@ function quizView() {
   if (!show) return;
   $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; render(); scrollTo(0, 0); };
   if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(t)}</span></p>`).join('')}</div><div class="lesson-text">${fmtText(esc(s.text))}</div>`);
+}
+function exampleView(q) {
+  const show = quiz.answered, ok = quiz.answer === 0, s = q.section;
+  main(`<div class="section-top"><div><div class="label">${modeLabel(quiz.mode)}</div><h2>${esc(s.title)}</h2></div><span class="pill">${quiz.index + 1}/${quiz.questions.length}</span></div>
+  <div class="progress"><div style="width:${quiz.index / quiz.questions.length * 100}%"></div></div>
+  <div class="question-card"><div class="label">例題</div><h3>${fmtText(esc(q.stem), 1)}</h3>
+    ${quiz.peek || show ? `<div class="explain"><p><b class="ans-h">答え</b>${fmtText(esc(q.ans), 1)}</p></div>` : '<button class="button full" id="peek">答えを見る</button>'}
+    ${quiz.peek && !show ? '<div class="button-row"><button class="button secondary" data-self="1">わかった</button><button class="button" data-self="0">まちがえた</button></div>' : ''}
+    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
+  </div>`);
+  if ($('peek')) $('peek').onclick = () => { quiz.peek = true; render(); };
+  document.querySelectorAll('[data-self]').forEach(b => b.onclick = () => answer(b.dataset.self === '1' ? 0 : 1));
+  if (!show) return;
+  typeInto('rpg-msg', ok ? 'よし！ キコも うなずいてる！' : 'だいじょうぶ！ ふくしゅうで また でるよ');
+  $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; quiz.peek = false; render(); scrollTo(0, 0); };
 }
 function answer(i) {
   if (quiz.answered) return;
@@ -605,7 +655,7 @@ function settings() {
     ${['nologin', 'expired'].includes(sync.status) ? loginBox() : `<div class="button-row"><button class="button secondary" id="sync-now">今すぐ同期</button><button class="button secondary" id="copy-token">合言葉をコピー</button></div>`}</div>
   <div class="panel"><h3>${ic('bar')}記録</h3>
     <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/8</p>
-    <p>解いた問題 ${Object.keys(state.history).length}/144 ／ 計算 ${state.drillCorrect}問</p>
+    <p>解いた問題 ${Object.keys(state.history).filter(id => !isEx(id)).length}/144 ／ 計算 ${state.drillCorrect}問</p>
     <p>勉強した日 ${state.active.length}日 ／ 最高連続 ${state.bestStreak}日</p></div>
   <div class="panel"><h3>${ic('disk')}バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
   $('exam-save').onclick = () => { const v = $('exam-input').value; if (!v) return; state.exam = v; save(); modal('保存しました', `試験日：${esc(slash(v))}<br>残り ${dayDelta(v, today())}日`); };
