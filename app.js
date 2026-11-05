@@ -76,7 +76,7 @@ async function pullCloud() {
   try {
     const j = await api('qc_load');
     if (j.error === 'auth') { sync.status = 'expired'; sync.ok = false; chrome(); return; }
-    if (!j.ok) { sync.status = 'notready'; sync.ok = false; chrome(); return; }
+    if (!j.ok) { sync.status = 'notready'; sync.err = String(j.error || JSON.stringify(j)).slice(0, 120); sync.ok = false; chrome(); return; }
     sync.ok = true;
     if (j.v) {
       const cloud = normalize(typeof j.v === 'string' ? JSON.parse(j.v) : j.v);
@@ -88,7 +88,7 @@ async function pullCloud() {
       if ((cloud.updatedAt || 0) < (state.updatedAt || 0) || changed) pushCloud();
     } else pushCloud();
     sync.status = 'synced'; sync.at = Date.now();
-  } catch (_) { sync.status = navigator.onLine ? 'notready' : 'offline'; }
+  } catch (e) { sync.status = navigator.onLine ? 'notready' : 'offline'; sync.err = String(e && e.message || e).slice(0, 120); }
   chrome();
 }
 async function pushCloud() {
@@ -577,7 +577,7 @@ function settings() {
   const st = { synced: 'キコハウスのアカウントで同期中', nologin: 'キコハウスでログインすると同期できます', expired: 'ログインが切れました', notready: '同期の準備中（いまは端末内に保存）', offline: 'オフライン（端末内に保存）', local: '端末内に保存' }[sync.status];
   main(`<h2>⚙️ 設定</h2>
   <div class="panel"><h3>📅 試験日</h3><input class="input" type="date" value="${esc(state.exam)}" id="exam-input"><button class="button full" id="exam-save" style="margin-top:10px">保存</button></div>
-  <div class="panel"><h3>☁️ 同期</h3><p>${st}</p>
+  <div class="panel"><h3>☁️ 同期</h3><p>${st}</p>${sync.err && sync.status !== 'synced' ? `<p class="muted">${esc(sync.err)}</p>` : ''}
     ${['nologin', 'expired'].includes(sync.status) ? loginBox() : `<div class="button-row"><button class="button secondary" id="sync-now">今すぐ同期</button><button class="button secondary" id="copy-token">合言葉をコピー</button></div>`}</div>
   <div class="panel"><h3>📊 記録</h3>
     <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/8</p>
