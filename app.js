@@ -64,13 +64,17 @@ function mergeState(a, b) {
 }
 
 const canon = o => JSON.stringify(o, (k, v) => k === 'updatedAt' ? undefined : v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(x => [x, v[x]])) : v);
-let syncTimer = null;
-function save() {
+let syncTimer = null, retryN = 0;
+const DIRTY = 'kiko-qc-dirty';
+// 保存：まず端末に書き、「まだ送っていない」印を付けてから、少し待ってクラウドへ送る
+function save(now) {
   state.updatedAt = Date.now();
   lsSet(STORE, JSON.stringify(state));
+  lsSet(DIRTY, '1');
   clearTimeout(syncTimer);
-  if (sync.token && sync.ok) syncTimer = setTimeout(pushCloud, 1500);
+  if (sync.token && sync.ok) syncTimer = setTimeout(pushCloud, now ? 0 : 1500);
 }
+const isDirty = () => !!lsGet(DIRTY);
 
 // ---------- 同期（キコハウスのログインを使う） ----------
 const sync = { token: null, ok: false, status: 'local', at: null };
@@ -95,22 +99,57 @@ async function pullCloud() {
       state = merged;
       lsSet(STORE, JSON.stringify(state));
       if (changed && !quiz && !['lesson', 'drill', 'finish'].includes(page)) render();
-      if ((cloud.updatedAt || 0) < (state.updatedAt || 0) || changed) pushCloud();
-    } else pushCloud();
-    sync.status = 'synced'; sync.at = Date.now();
+      sync.status = 'synced'; sync.at = Date.now();
+      if ((cloud.updatedAt || 0) < (state.updatedAt || 0) || changed || isDirty()) pushCloud();
+    } else { sync.status = 'synced'; pushCloud(); }
   } catch (e) { sync.status = navigator.onLine ? 'notready' : 'offline'; sync.err = String(e && e.message || e).slice(0, 120); }
   chrome();
 }
-async function pushCloud() {
+// 送るときは、直前にクラウドの記録を読んで合わせてから書く（ほかの端末の分を消さない）
+let pushing = false, pushAgain = false;
+async function pushCloud(win) {
   if (!sync.token || !sync.ok) return;
+  if (pushing) { pushAgain = true; return; }
+  pushing = true; clearTimeout(syncTimer);
+  const prev = sync.status; sync.status = 'saving'; chrome(); if (win) savingWin(true);
   try {
-    const j = await api('qc_save', JSON.stringify(state));
+    const j0 = await api('qc_load');
+    if (j0.error === 'auth') { sync.status = 'expired'; sync.ok = false; return; }
+    if (!j0.ok) throw Error(j0.error || 'load');
+    if (j0.v) {
+      const cloud = normalize(typeof j0.v === 'string' ? JSON.parse(j0.v) : j0.v);
+      const merged = mergeState(state, cloud);
+      merged.updatedAt = Math.max(state.updatedAt || 0, cloud.updatedAt || 0);
+      const changed = canon(merged) !== canon(state);
+      state = merged; lsSet(STORE, JSON.stringify(state));
+      if (changed && !quiz && !['lesson', 'drill', 'finish'].includes(page)) render();
+    }
+    const sent = JSON.stringify(state);
+    const j = await api('qc_save', sent);
     if (j.error === 'auth') { sync.status = 'expired'; sync.ok = false; }
-    else if (j.ok) { sync.status = 'synced'; sync.at = Date.now(); }
-  } catch (_) { sync.status = 'offline'; }
-  chrome();
+    else if (j.ok) { if (JSON.stringify(state) === sent) lsSet(DIRTY, null); sync.status = 'synced'; sync.at = Date.now(); retryN = 0; }
+    else throw Error(j.error || 'save');
+  } catch (e) {
+    sync.status = navigator.onLine ? 'retry' : 'offline'; sync.err = String(e && e.message || e).slice(0, 120);
+  } finally {
+    pushing = false; if (win) savingWin(false); chrome();
+    if (pushAgain) { pushAgain = false; pushCloud(); }
+    else if (isDirty() && sync.ok) { syncTimer = setTimeout(pushCloud, Math.min(60000, 5000 * 2 ** retryN++)); }
+  }
 }
-const syncLabel = () => ({ synced: ic('cloud') + '同期中', nologin: ic('cloud') + 'ログイン', expired: ic('cloud') + '再ログイン', notready: '端末内保存', offline: 'オフライン', local: '端末内保存' }[sync.status]);
+// 閉じる・裏に回るときは、待たずにその場で送る（keepalive で届けきる）
+function flushNow() {
+  if (!sync.token || !sync.ok || !isDirty() || pushing) return;
+  const body = JSON.stringify({ token: sync.token, fn: 'qc_save', v: JSON.stringify(state) });
+  if (body.length > 60000) return;
+  try { fetch(KH_API, { method: 'POST', body, keepalive: true }); } catch (_) {}
+}
+function savingWin(on) {
+  let w = $('saving-win');
+  if (on) { if (!w) { w = document.createElement('div'); w.id = 'saving-win'; w.className = 'rpg bottom'; w.innerHTML = '<p>保存中<span class="ld"><i>.</i><i>.</i><i>.</i></span></p>'; document.body.appendChild(w); } }
+  else if (w) w.remove();
+}
+const syncLabel = () => ({ synced: ic('cloud') + '同期中', saving: ic('cloud') + '保存中…', retry: ic('cloud') + '未送信', nologin: ic('cloud') + 'ログイン', expired: ic('cloud') + '再ログイン', notready: '端末内保存', offline: 'オフライン', local: '端末内保存' }[sync.status]);
 
 // ---------- 学習の時期 ----------
 function phase() {
@@ -142,13 +181,15 @@ function examplesOf(s) {
     return { id: `${s.id}-ex${n}`, n, example: true, stem, ans, answer: 0, options: [] };
   }));
 }
+const tight = t => String(t).replace(/([^\x00-\x7f]) (?=[^\x00-\x7f])/g, '$1'); // 改行の跡のすき間を詰める
 const isEx = id => /-ex\d+$/.test(id);
 const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const chTitle = id => CHAPS.find(c => c.id === id)?.title || '';
 function level() { let l = 1, t = 0, step = 20; while (t + step <= state.crickets) { t += step; l++; step += 10; } return { level: l, base: t, next: t + step }; }
 function streak() { let n = 0, d = today(); if (!state.days.includes(d)) d = addDays(d, -1); while (state.days.includes(d)) { n++; d = addDays(d, -1); } return n; }
-function markActive() { // 1問解くごとに呼ぶ。その日に10問解いたら連続日数に数える
+function markActive(noCount) { // 1問解くごとに呼ぶ。その日に10問解いたら連続日数に数える（例題は数えない）
   const t = today(); if (!state.active.includes(t)) state.active.push(t);
+  if (noCount) return;
   state.dayCount[t] = (state.dayCount[t] || 0) + 1;
   if (state.dayCount[t] >= 10) markStreakDay();
 }
@@ -208,7 +249,7 @@ function reward(qid, correct) {
       if (r.step >= 3) { r.due = null; state.crickets += 3; } else r.due = addDays(today(), r.step === 1 ? 3 : 7);
     }
   } else state.review[qid] = { step: 0, due: addDays(today(), 1) };
-  markActive(); save();
+  markActive(isEx(qid)); save();
 }
 
 // ---------- 画面の状態 ----------
@@ -246,10 +287,12 @@ function setPage(p) { const same = p === page; page = p; quiz = null; if (p !== 
 // 画面を切り替えるたびに履歴を残し、ブラウザの「戻る」やスワイプで前の画面に戻れるようにする
 function pushNav() { try { history.pushState({ page, sectionId }, ''); } catch (_) {} }
 window.addEventListener('popstate', e => {
+  if (ignorePop) { ignorePop = false; return; }
+  if (modalOpen()) { closeModal(true); return; } // 窓が開いていたら、最初の「戻る」は窓を閉じるだけ
   const st = e.state || { page: 'home' };
   if (quiz && page === 'quiz' && !confirm('問題をやめますか？')) { pushNav(); return; }
   page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page; sectionId = st.sectionId || sectionId;
-  quiz = null; if (page !== 'drill') drill = null; closeModal(); render(); scrollTo(0, 0);
+  quiz = null; if (page !== 'drill') drill = null; render(); scrollTo(0, 0);
 });
 
 // ---------- ホーム ----------
@@ -347,7 +390,7 @@ function lesson() {
   main(`<div class="reading">
     <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
     <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">' + ic('check') + '</span>' : ''}</div>
-    <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(t)}</span></p>`).join('')}</div>
+    <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>
     <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}4問</button></div>
     ${open ? '' : '<p class="note">' + ic('lock') + '前の節をクリアすると解けます</p>'}
     <div id="full-text" class="lesson-text" hidden>${body}</div>
@@ -407,7 +450,7 @@ function quizView() {
   if ($('calc-toggle')) $('calc-toggle').onclick = () => toggleCalc('calc-slot');
   if (!show) return;
   $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; render(); scrollTo(0, 0); };
-  if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(t)}</span></p>`).join('')}</div><div class="lesson-text">${fmtText(esc(s.text))}</div>`);
+  if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div><div class="lesson-text">${fmtText(esc(s.text))}</div>`);
 }
 function exampleView(q) {
   const show = quiz.answered, ok = quiz.answer === 0, s = q.section;
@@ -444,7 +487,7 @@ function quizFinish() {
     else if (!pass) msg = '3問正解でクリア';
   }
   if (qz.mode === 'daily') { if (!state.dailyDone.includes(today())) state.dailyDone.push(today()); markStreakDay(); msg = `連続 ${streak()}日`; }
-  save();
+  save(); pushCloud(true);
   quiz = null; page = 'finish'; try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
     : qz.mode === 'stage' ? (pass ? (msg.includes('ひらいた') ? 'せつ クリア！ つぎの せつが ひらいた！' : 'せつ クリア！') : 'あと すこし！ 3もん せいかいで クリア')
@@ -691,7 +734,7 @@ function settings() {
     <p>解いた問題 ${Object.keys(state.history).filter(id => !isEx(id)).length}/144 ／ 計算 ${state.drillCorrect}問</p>
     <p>勉強した日 ${state.active.length}日 ／ 最高連続 ${state.bestStreak}日</p></div>
   <div class="panel"><h3>${ic('disk')}バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
-  $('exam-save').onclick = () => { const v = $('exam-input').value; if (!v) return; state.exam = v; save(); modal('保存しました', `試験日：${esc(slash(v))}<br>残り ${dayDelta(v, today())}日`); };
+  $('exam-save').onclick = () => { const v = $('exam-input').value; if (!v) return; state.exam = v; save(); pushCloud(true); modal('保存しました', `試験日：${esc(slash(v))}<br>残り ${dayDelta(v, today())}日`); };
   bindLogin();
   if ($('copy-token')) $('copy-token').onclick = async () => { try { await navigator.clipboard.writeText(lsGet('kh-token') || ''); modal('コピーしました', 'ホーム画面のアプリの「合言葉」に貼ってください'); } catch (_) { modal('コピーできませんでした', ''); } };
   if ($('sync-now')) $('sync-now').onclick = async () => { await pullCloud(); render(); };
@@ -710,8 +753,17 @@ const loginBox = () => `<a class="button full" href="${KH_LOGIN_PAGE}" >1. Googl
 function bindLogin() { const f = $('code-form'); if (!f) return; f.onsubmit = e => { e.preventDefault(); const v = $('code-in').value.trim(); if (!v) return; lsSet('kh-token', v); lsSet('qc-key', null); location.reload(); }; }
 
 // ---------- 共通 ----------
-function modal(title, html) { $('modal-title').innerHTML = title; $('modal-content').innerHTML = html; $('modal-overlay').classList.remove('hidden'); }
-function closeModal() { $('modal-overlay').classList.add('hidden'); }
+const modalOpen = () => !$('modal-overlay').classList.contains('hidden');
+let ignorePop = false;
+function modal(title, html) {
+  if (!modalOpen()) { try { history.pushState({ ...(history.state || { page, sectionId }), modal: 1 }, ''); } catch (_) {} }
+  $('modal-title').innerHTML = title; $('modal-content').innerHTML = html; $('modal-overlay').classList.remove('hidden');
+}
+function closeModal(fromPop) {
+  if (!modalOpen()) return;
+  $('modal-overlay').classList.add('hidden');
+  if (!fromPop && history.state && history.state.modal) { ignorePop = true; history.back(); }
+}
 function render() {
   ({ home, map, lesson, quiz: quizView, review, drill: drillView, room, settings }[page] || (() => {}))();
 }
@@ -737,7 +789,7 @@ const DIAG = {};
 async function boot() {
   const g = $('gkiko'); if (g && window.KIKO) { g.src = KIKO.png.walkRight[0]; KIKO.play(g, KIKO.png.walkRight, 220, 0); }
   try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
-  $('modal-close').onclick = closeModal;
+  $('modal-close').onclick = () => closeModal();
   $('modal-overlay').onclick = e => { if (e.target === $('modal-overlay')) closeModal(); };
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setPage(b.dataset.page));
   $('sync-btn').onclick = () => setPage('settings');
@@ -753,7 +805,9 @@ async function boot() {
   SECS = DATA.sections; CHAPS = DATA.chapters;
   render();
   pullCloud();
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pullCloud(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pullCloud(); else flushNow(); });
+  window.addEventListener('pagehide', flushNow);
+  window.addEventListener('online', () => { if (sync.ok) pushCloud(); else pullCloud(); });
 }
 boot();
 })();

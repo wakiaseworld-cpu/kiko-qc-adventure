@@ -129,10 +129,15 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 .calc-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
 .calc-grid button{font:inherit;font-size:1.1rem;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:10px 0}
 .calc-grid button.op{background:var(--soft);font-weight:700}
-.ntable-wrap{overflow-x:auto;max-width:100%}
-.ntable{border-collapse:collapse;font-family:var(--body);font-size:11px}
-.ntable th,.ntable td{border:1px solid var(--line);padding:2px 4px;text-align:right}
+.ntable-wrap{overflow:auto;max-width:100%;max-height:62vh;border:1px solid var(--line)}
+.ntable{border-collapse:separate;border-spacing:0;font-family:var(--body);font-size:11px}
+.ntable th,.ntable td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:2px 4px;text-align:right}
 .ntable th{background:var(--soft)}
+.ntable tr:first-child th{position:sticky;top:0;z-index:2}
+.ntable th:first-child{position:sticky;left:0;z-index:1}
+.ntable tr:first-child th:first-child{z-index:3}
+.ntable th,.ntable td{background-clip:padding-box}
+.ntable td{background:var(--surface)}
 
 /* おへや */
 .room-scene{position:relative;text-align:center;padding:14px 0 0;border-radius:14px;border:1px solid var(--line);background:var(--bg);overflow:hidden}
@@ -194,3 +199,8 @@ details.chapter>summary::-webkit-details-marker{display:none}
 details.chapter[open]>summary{margin-bottom:10px}
 .chev{width:10px;height:10px;border-right:3px solid var(--fg);border-bottom:3px solid var(--fg);transform:rotate(45deg);margin:0 6px 4px 4px;flex:none;transition:transform .15s}
 details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
+.rpg.bottom{position:fixed;left:12px;right:12px;bottom:calc(26px + env(safe-area-inset-bottom,0px));max-width:520px;margin:0 auto;z-index:60;justify-content:center;box-shadow:0 0 0 3px var(--rpg),0 0 0 6px var(--rpg-fg),0 0 0 9px var(--rpg),0 10px 24px rgba(0,0,0,.25)}
+.rpg.bottom p{flex:none}
+.ld i{font-style:normal;animation:blink .9s steps(1) infinite}.ld i:nth-child(2){animation-delay:.3s}.ld i:nth-child(3){animation-delay:.6s}
+@keyframes blink{0%{opacity:1}50%{opacity:.15}}
+@media (prefers-reduced-motion:reduce){.ld i{animation:none}}
