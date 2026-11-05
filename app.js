@@ -346,6 +346,7 @@ window.addEventListener('popstate', e => {
 
 // ---------- ホーム ----------
 function home() {
+  const nextSec = nextStudySec();
   const lv = level(), plan = todayPlan(), ph = phase(), rev = due().length, idle = idleDays();
   const h = new Date().getHours(), night = h >= 23 || h < 6, sleeping = night || idle >= 2;
   const doneToday = state.days.includes(today());
@@ -364,20 +365,26 @@ function home() {
       <div class="stat"><b class="dot">${state.cleared.length}<i>/36</i></b><small>節クリア</small></div>
     </div>
   </section>
-  <button class="button pop full" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ''}今日はこれだけ（10問）</button>
+  <div class="duo"><button class="button big" id="start-text">${ic('book')}テキストを読む<small>${esc(nextSec ? nextSec.number + '. ' + nextSec.title : '')}</small></button><button class="button pop big" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ic('pencil')}今日はこれだけ<small>10問</small></button></div>
   <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
   <section class="panel strong">
     <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
     <p>優先：<b class="nb">${chapterLabel(ph.chapters)}</b>${plan.notCleared && ph.n < 4 ? `<span class="muted nb"> ／ 目安 1日${plan.perDay}節</span>` : ''}</p>
   </section>
-  ${state.lastSection ? `<button class="mini full" id="resume">${ic('book')}つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
+  ${state.lastSection && state.lastSection !== nextSec?.id ? `<button class="mini full" id="resume">${ic('book')}つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
   const img = $('home-kiko');
   if (img) stopAnim = sleeping ? KIKO.play(img, KIKO.png.tiny.sleep, 440, 0) : KIKO.play(img, KIKO.png.walkRight, 220, 0);
   $('start-daily').onclick = () => startQuiz(dailyQuestions(), 'daily');
+  $('start-text').onclick = () => nextSec && openLesson(nextSec.id, true);
   if ($('resume')) $('resume').onclick = () => openLesson(state.lastSection);
 }
 
 // ---------- マップ ----------
+// 次に読む節：優先の章で、まだクリアしていない最初の節（なければ全体で、それもなければ最後に開いた節）
+function nextStudySec() {
+  const ph = phase(), open = s => unlockedSec(s) && !has(state.cleared, s.id);
+  return SECS.find(s => open(s) && (!ph.chapters || ph.chapters.includes(s.chapter))) || SECS.find(open) || secBy(state.lastSection) || SECS[0];
+}
 const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`);
 function map() {
   const ph = phase();
@@ -728,7 +735,7 @@ const DRILL_TIPS = {
   corr: 'r は −1〜＋1。Sxy がマイナスなら r もマイナス'
 };
 // 計算の解説は1行ずつ区切り、最後の行（答え）を目立たせる
-const stepsHtml = t => `<div class="steps">${String(t).split('\n').filter(x => x.trim()).map((l, i, a) => `<div class="st${i === a.length - 1 ? ' last' : ''}">${esc(l)}</div>`).join('')}</div>`;
+const stepsHtml = t => `<div class="steps">${String(t).split('\n').filter(x => x.trim()).map((l, i, a) => { const k = i === a.length - 1 ? 'last' : i === 0 ? 'first' : ''; return `<div class="st ${k}"><b class="st-h">${k === 'last' ? '答え' : k === 'first' ? '式' : '計算'}</b><span>${esc(l)}</span></div>`; }).join('')}</div>`;
 const tipHtml = t => t ? `<p class="tip"><b class="tip-h">つまずき</b>${esc(t)}</p>` : '';
 // 数字入力の答え合わせ：問題の「小数第○位」（なければ答えの桁）で四捨五入して合えば正解
 function numOk(input, ansStr, stem) {
