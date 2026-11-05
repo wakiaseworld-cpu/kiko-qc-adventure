@@ -28,7 +28,7 @@ const slash = s => s ? s.replace(/-/g, '/') : '—';
 const initial = () => ({
   version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
   crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {},
-  days: [], active: [], bestStreak: 0, lastSection: null, updatedAt: 0
+  days: [], active: [], dayCount: {}, bestStreak: 0, lastSection: null, updatedAt: 0
 });
 function normalize(obj) {
   const s = { ...initial(), ...(obj || {}) };
@@ -49,11 +49,21 @@ function mergeState(a, b) {
     const o = m.history[id];
     m.history[id] = !o || (h.attempts || 0) >= (o.attempts || 0) ? h : o;
   }
+  m.review = {};
+  for (const id of new Set([...Object.keys(a.review || {}), ...Object.keys(b.review || {})])) {
+    const x = (a.review || {})[id], y = (b.review || {})[id];
+    if (!x || !y) { m.review[id] = x || y; continue; }
+    const lx = (a.history || {})[id]?.last || '', ly = (b.history || {})[id]?.last || '';
+    m.review[id] = lx > ly ? x : ly > lx ? y : (newer === a ? x : y);
+  }
   m.practiceAwarded = { ...older.practiceAwarded, ...newer.practiceAwarded };
+  m.dayCount = { ...(a.dayCount || {}) };
+  for (const [d, n] of Object.entries(b.dayCount || {})) m.dayCount[d] = Math.max(m.dayCount[d] || 0, n);
   for (const k of ['crickets', 'specialFood', 'drillCorrect', 'drillCounter', 'bestStreak']) m[k] = Math.max(a[k] || 0, b[k] || 0);
   return m;
 }
 
+const canon = o => JSON.stringify(o, (k, v) => k === 'updatedAt' ? undefined : v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map(x => [x, v[x]])) : v);
 let syncTimer = null;
 function save() {
   state.updatedAt = Date.now();
@@ -81,10 +91,10 @@ async function pullCloud() {
     if (j.v) {
       const cloud = normalize(typeof j.v === 'string' ? JSON.parse(j.v) : j.v);
       const merged = mergeState(state, cloud);
-      const changed = JSON.stringify(merged) !== JSON.stringify(state);
+      const changed = canon(merged) !== canon(state);
       state = merged;
       lsSet(STORE, JSON.stringify(state));
-      if (changed && !quiz) render();
+      if (changed && !quiz && !['lesson', 'drill', 'finish'].includes(page)) render();
       if ((cloud.updatedAt || 0) < (state.updatedAt || 0) || changed) pushCloud();
     } else pushCloud();
     sync.status = 'synced'; sync.at = Date.now();
@@ -106,8 +116,8 @@ const syncLabel = () => ({ synced: ic('cloud') + '同期中', nologin: ic('cloud
 function phase() {
   const t = today(), left = dayDelta(state.exam, t);
   if (left <= 14) return { n: 4, name: '直前期', chapters: null, note: '復習と仕上げ' };
-  if (t < '2026-11-14') return { n: 1, name: '第1期', chapters: CALC_CHAPTERS, note: '計算の章' };
-  if (t < '2026-12-02') return { n: 2, name: '第2期', chapters: CALC_CHAPTERS, note: '計算の章' };
+  if (left >= 36) return { n: 1, name: '第1期', chapters: CALC_CHAPTERS, note: '計算の章' };
+  if (left >= 18) return { n: 2, name: '第2期', chapters: CALC_CHAPTERS, note: '計算の章' };
   return { n: 3, name: '第3期', chapters: null, note: '全章をまわす' };
 }
 const chapterLabel = chs => chs ? '第' + chs.join('・') + '章' : '全章';
@@ -137,7 +147,11 @@ const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { cons
 const chTitle = id => CHAPS.find(c => c.id === id)?.title || '';
 function level() { let l = 1, t = 0, step = 20; while (t + step <= state.crickets) { t += step; l++; step += 10; } return { level: l, base: t, next: t + step }; }
 function streak() { let n = 0, d = today(); if (!state.days.includes(d)) d = addDays(d, -1); while (state.days.includes(d)) { n++; d = addDays(d, -1); } return n; }
-function markActive() { if (!state.active.includes(today())) state.active.push(today()); }
+function markActive() { // 1問解くごとに呼ぶ。その日に10問解いたら連続日数に数える
+  const t = today(); if (!state.active.includes(t)) state.active.push(t);
+  state.dayCount[t] = (state.dayCount[t] || 0) + 1;
+  if (state.dayCount[t] >= 10) markStreakDay();
+}
 function markStreakDay() {
   if (!state.days.includes(today())) { state.days.push(today()); state.days.sort(); }
   state.bestStreak = Math.max(state.bestStreak, streak());
@@ -198,6 +212,7 @@ function reward(qid, correct) {
 }
 
 // ---------- 画面の状態 ----------
+let openChaps = null;
 let page = 'home', sectionId = null, quiz = null, drill = null, stopAnim = null;
 let typeTimer = null;
 function typeInto(id, text) {
@@ -227,12 +242,20 @@ function animate(id, kind, ms = 300, loops = 0) {
   const img = $(id); if (!img || !window.KIKO) return;
   stopAnim = KIKO.play(img, KIKO.png.anim[kind], ms, loops);
 }
-function setPage(p) { page = p; quiz = null; if (p !== 'drill') drill = null; scrollTo(0, 0); render(); }
+function setPage(p) { const same = p === page; page = p; quiz = null; if (p !== 'drill') drill = null; if (!same) pushNav(); scrollTo(0, 0); render(); }
+// 画面を切り替えるたびに履歴を残し、ブラウザの「戻る」やスワイプで前の画面に戻れるようにする
+function pushNav() { try { history.pushState({ page, sectionId }, ''); } catch (_) {} }
+window.addEventListener('popstate', e => {
+  const st = e.state || { page: 'home' };
+  if (quiz && page === 'quiz' && !confirm('問題をやめますか？')) { pushNav(); return; }
+  page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page; sectionId = st.sectionId || sectionId;
+  quiz = null; if (page !== 'drill') drill = null; closeModal(); render(); scrollTo(0, 0);
+});
 
 // ---------- ホーム ----------
 function home() {
   const lv = level(), plan = todayPlan(), ph = phase(), rev = due().length, idle = idleDays();
-  const h = new Date().getHours(), night = h >= 20 || h < 6, sleeping = night || idle >= 2;
+  const h = new Date().getHours(), night = h >= 23 || h < 6, sleeping = night || idle >= 2;
   const doneToday = state.days.includes(today());
   const revN = Math.min(rev, ph.n === 4 ? 8 : 10);
   const bub = idle >= 2 ? 'ひさしぶり…' : night ? 'ねむい… zzz' : doneToday ? 'きょうも おつかれ！' : plan.left >= 0 ? `試験まで あと${plan.left}日` : 'がんばろう！';
@@ -270,17 +293,19 @@ function map() {
   for (const ch of CHAPS) {
     const secs = SECS.filter(s => s.chapter === ch.id), done = secs.filter(s => has(state.cleared, s.id)).length;
     const pri = ph.chapters && ph.chapters.includes(ch.id);
-    html += `<div class="chapter ${pri ? 'priority' : ''}"><div class="chapter-header"><div class="chapter-num">${ch.id}</div><div style="flex:1"><h3>${esc(ch.title)}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ ' + ic('trophy') : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}</div><div class="stage-list">`;
+    const open = openChaps ? openChaps.has(ch.id) : (ph.chapters ? pri : (secBy(state.lastSection)?.chapter || 1) === ch.id);
+    html += `<details class="chapter ${pri ? 'priority' : ''}" data-ch="${ch.id}" ${open ? 'open' : ''}><summary class="chapter-header"><div class="chapter-num">${ch.id}</div><div style="flex:1"><h3>${esc(ch.title)}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ ' + ic('trophy') : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}<span class="chev"></span></summary><div class="stage-list">`;
     for (const s of secs) html += `<button class="stage" data-stage="${s.id}"><span>${s.number}. ${esc(s.title)}</span><span class="tag">${has(state.cleared, s.id) ? ic('check') : unlockedSec(s) ? ic('play') : ic('lock')}</span></button>`;
-    html += `</div><button class="button gold full boss-btn" data-boss="${ch.id}" ${done !== secs.length ? 'disabled' : ''}>${ic('crown')}ボス戦${has(state.boss, ch.id) ? '（再挑戦）' : ''}</button></div>`;
+    html += `</div><button class="button gold full boss-btn" data-boss="${ch.id}" ${done !== secs.length ? 'disabled' : ''}>${ic('crown')}ボス戦${has(state.boss, ch.id) ? '（再挑戦）' : ''}</button></details>`;
   }
   main(html);
+  document.querySelectorAll('details.chapter').forEach(d => d.ontoggle = () => { openChaps = new Set([...document.querySelectorAll('details.chapter[open]')].map(x => +x.dataset.ch)); });
   document.querySelectorAll('[data-stage]').forEach(b => b.onclick = () => openLesson(b.dataset.stage));
   document.querySelectorAll('[data-boss]').forEach(b => b.onclick = () => startBoss(+b.dataset.boss));
 }
 function openLesson(id, showText = false) {
   sectionId = id; state.lastSection = id; save();
-  page = 'lesson'; quiz = null; render(); scrollTo(0, 0);
+  page = 'lesson'; quiz = null; pushNav(); render(); scrollTo(0, 0);
   if (showText) { const el = $('full-text'); if (el) { el.hidden = false; $('toggle-text').innerHTML = ic('book') + '閉じる'; } }
 }
 
@@ -298,7 +323,7 @@ function fmtText(raw, inline) {
     } else out.push(l);
   }
   const NG = /^(何|それぞれ何|これ|それ|この|こう|そう)$/;
-  const kw = t => t
+  const kw = t => t.replace(/([^\x00-\x7f]) (?=[^\x00-\x7f])/g, '$1')
     .replace(/[^。]*?(大切|重要|前提|ポイント)[^。]*。/g, m => `<span class="imp">${m}</span>`)
     .replace(/「([^「」\n]{2,20})」(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, '「<b class="kw">$1</b>」')
     .replace(/([^\s、。をはがにでも「」：>]{2,20}?)(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, (m, t) => NG.test(t) || /^[）)れ]/.test(t) || /→|ほしい|する$|書く/.test(t) || (t.split('（').length !== t.split('）').length) || t.includes('<') ? m : `<b class="kw">${t}</b>`);
@@ -345,10 +370,18 @@ function lesson() {
 }
 
 // ---------- クイズ ----------
+// 選択肢の並びを毎回シャッフルし、解説の中の記号（「イは〜」など）も付け替える
+function shuffleChoices(q) {
+  if (q.drill || q.example || !q.options || q.options.length !== 4) return q;
+  const perm = shuffle([0, 1, 2, 3]), pos = perm.map((_, j) => perm.indexOf(j));
+  const explanation = q.explanation.replace(/(^|[^ァ-ヶー])([アイウエ])(?![ァ-ヶー])/g, (m, p1, k) => p1 + KANA[pos[KANA.indexOf(k)]]);
+  return { ...q, options: perm.map(j => q.options[j]), answer: pos[q.answer], explanation: explanation.replace(/([^\x00-\x7f]) (?=[^\x00-\x7f])/g, '$1') };
+}
 function startQuiz(qs, mode, id) {
   if (!qs.length) return;
+  qs = qs.map(shuffleChoices);
   quiz = { questions: qs, index: 0, answered: false, mode, answer: null, correctCount: 0, section: id };
-  page = 'quiz'; scrollTo(0, 0); render();
+  page = 'quiz'; pushNav(); scrollTo(0, 0); render();
 }
 function startBoss(ch) {
   const pool = SECS.filter(s => s.chapter === ch).flatMap(s => s.questions.map(q => ({ ...q, section: s })));
@@ -412,7 +445,7 @@ function quizFinish() {
   }
   if (qz.mode === 'daily') { markStreakDay(); msg = `連続 ${streak()}日`; }
   save();
-  quiz = null; page = 'finish';
+  quiz = null; page = 'finish'; try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
     : qz.mode === 'stage' ? (pass ? (msg.includes('ひらいた') ? 'せつ クリア！ つぎの せつが ひらいた！' : 'せつ クリア！') : 'あと すこし！ 3もん せいかいで クリア')
     : qz.mode === 'daily' ? `きょうの ぶん おわり！ れんぞく ${streak()}にち！` : 'ふくしゅう おわり！';
@@ -445,7 +478,7 @@ function upperP(k) { // 標準正規分布の上側確率
 const P4 = k => Number(upperP(k).toFixed(4));
 function normalTable() {
   let h = '<div class="ntable-wrap"><table class="ntable"><tr><th>Kp</th>';
-  for (let c = 0; c < 10; c++) h += `<th>.${c}</th>`;
+  for (let c = 0; c < 10; c++) h += `<th>.0${c}</th>`;
   h += '</tr>';
   for (let r = 0; r <= 30; r++) {
     h += `<tr><th>${(r / 10).toFixed(1)}</th>`;
@@ -614,22 +647,22 @@ function toggleCalc(slotId) {
   const slot = $(slotId); if (!slot) return;
   if (slot.innerHTML) { slot.innerHTML = ''; return; }
   slot.innerHTML = `<div class="calc"><div class="calc-screen" id="calc-screen">0</div><div class="calc-grid">${['C', '√', '←', '÷', '7', '8', '9', '×', '4', '5', '6', '−', '1', '2', '3', '＋', '0', '.', '±', '='].map(k => `<button data-key="${k}" class="${'÷×−＋='.includes(k) ? 'op' : ''}">${k}</button>`).join('')}</div></div>`;
-  let cur = '0', acc = null, op = null, fresh = true;
+  let cur = '0', acc = null, op = null, fresh = true, typed = false;
   const show = v => { $('calc-screen').textContent = v; };
   const fmt = n => String(Number(n.toPrecision(10)));
   const apply = (a, b) => op === '＋' ? a + b : op === '−' ? a - b : op === '×' ? a * b : op === '÷' ? a / b : b;
   slot.querySelectorAll('[data-key]').forEach(b => b.onclick = () => {
     const k = b.dataset.key;
-    if (/^[0-9]$/.test(k)) { cur = fresh || cur === '0' ? k : cur + k; fresh = false; return show(cur); }
-    if (k === '.') { if (fresh) { cur = '0'; fresh = false; } if (!cur.includes('.')) cur += '.'; return show(cur); }
-    if (k === 'C') { cur = '0'; acc = null; op = null; fresh = true; return show(cur); }
+    if (/^[0-9]$/.test(k)) { cur = fresh || cur === '0' ? k : cur + k; fresh = false; typed = true; return show(cur); }
+    if (k === '.') { if (fresh) { cur = '0'; fresh = false; } if (!cur.includes('.')) cur += '.'; typed = true; return show(cur); }
+    if (k === 'C') { cur = '0'; acc = null; op = null; fresh = true; typed = false; return show(cur); }
     if (k === '←') { if (!fresh) cur = cur.slice(0, -1) || '0'; return show(cur); }
-    if (k === '±') { cur = fmt(-Number(cur)); return show(cur); }
-    if (k === '√') { cur = fmt(Math.sqrt(Number(cur))); fresh = true; return show(cur); }
+    if (k === '±') { cur = fmt(-Number(cur)); typed = true; return show(cur); }
+    if (k === '√') { cur = fmt(Math.sqrt(Number(cur))); fresh = true; typed = true; return show(cur); }
     const n = Number(cur);
-    if (k === '=') { if (op !== null) { cur = fmt(apply(acc, n)); acc = null; op = null; } fresh = true; return show(cur); }
-    acc = op !== null && !fresh ? apply(acc, n) : (op !== null ? acc : n);
-    op = k; fresh = true; cur = fmt(acc); show(cur);
+    if (k === '=') { if (op !== null) { cur = fmt(apply(acc, n)); acc = null; op = null; } fresh = true; typed = false; return show(cur); }
+    acc = op !== null && typed ? apply(acc, n) : (op !== null ? acc : n);
+    op = k; fresh = true; typed = false; cur = fmt(acc); show(cur);
   });
 }
 
@@ -703,6 +736,7 @@ const DIAG = {};
 
 async function boot() {
   const g = $('gkiko'); if (g && window.KIKO) { g.src = KIKO.png.walkRight[0]; KIKO.play(g, KIKO.png.walkRight, 220, 0); }
+  try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   $('modal-close').onclick = closeModal;
   $('modal-overlay').onclick = e => { if (e.target === $('modal-overlay')) closeModal(); };
   document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setPage(b.dataset.page));

@@ -189,3 +189,8 @@ h1,h2,h3,button,.pill,.tag,.label,.tile small,.kbub,.room-stats span,.muted{word
 .exq{display:flex;gap:8px;align-items:flex-start}
 .exq p{margin:0 0 8px}
 .qno{color:var(--accent);font-size:1.25rem;line-height:1.3;flex:none}
+details.chapter>summary{list-style:none;cursor:pointer;margin-bottom:0}
+details.chapter>summary::-webkit-details-marker{display:none}
+details.chapter[open]>summary{margin-bottom:10px}
+.chev{width:10px;height:10px;border-right:3px solid var(--fg);border-bottom:3px solid var(--fg);transform:rotate(45deg);margin:0 6px 4px 4px;flex:none;transition:transform .15s}
+details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}

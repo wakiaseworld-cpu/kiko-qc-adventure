@@ -12,7 +12,7 @@
     check: ['GGGGGGGGGGGG', 'GggggggggggG', 'GggggggggwgG', 'GgggggggwwgG', 'GggggggwwggG', 'GgwgggwwgggG', 'GgwwgwwggggG', 'GggwwwgggggG', 'GgggwggggggG', 'GggggggggggG', 'GggggggggggG', 'GGGGGGGGGGGG'],
     book: ['............', '.BBBB..BBBB.', 'BwwwwBBwwwwB', 'BwllwBBwllwB', 'BwwwwBBwwwwB', 'BwllwBBwllwB', 'BwwwwBBwwwwB', 'BwllwBBwllwB', 'BwwwwBBwwwwB', 'BBBBBBBBBBBB', '.....BB.....', '............'],
     trophy: ['..yyyyyyyy..', 'yyyyyyyyyyoy', 'y.yyyyyyyo.y', 'y.yyyyyyyo.y', '.yyyyyyyyoy.', '...yyyyyo...', '....yyyo....', '.....yo.....', '.....yo.....', '....yyyo....', '...nnnnnn...', '...nnnnnn...'],
-    play: ['............', '..B.........', '..BBB.......', '..BBBBB.....', '..BBBBBBB...', '..BBBBBBBBB.', '..BBBBBBBBB.', '..BBBBBBB...', '..BBBBB.....', '..BBB.......', '..B.........', '............'],
+    play: ['............', '..b.........', '..bbb.......', '..bbbbb.....', '..bbbbbbb...', '..bbbbbbbbb.', '..bbbbbbbbb.', '..bbbbbbb...', '..bbbbb.....', '..bbb.......', '..b.........', '............'],
     lock: ['....dddd....', '...d....d...', '..d......d..', '..d......d..', '..d......d..', '.yyyyyyyyyy.', '.yyyyyyyyyy.', '.yyyykkyyyy.', '.yyyykkyyyy.', '.yyyyykyyyy.', '.yyyyyyyyyy.', '.oooooooooo.'],
     crown: ['............', '............', 'y....yy....y', 'yy..yyyy..yy', 'yyy.yyyy.yyy', 'yyyyyyyyyyyy', 'yyryyyyyyryy', 'yyyyyyyyyyyy', 'oooooooooooo', '............', '............', '............'],
     sprout: ['............', '.gg.....gg..', 'gggg...gggg.', 'ggggg.ggggg.', '.gggg.gggg..', '..ggggggg...', '.....g......', '.....g......', '.....g......', '...nnnnn....', '..nnnnnnn...', '............'],
