@@ -401,7 +401,9 @@ function fmtText(raw, inline) {
   const kw = t => t.replace(/([^\x00-\x7f]) (?=[^\x00-\x7f])/g, '$1')
     .replace(/[^。]*?(大切|重要|前提|ポイント)[^。]*。/g, m => `<span class="imp">${m}</span>`)
     .replace(/「([^「」\n]{2,20})」(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, '「<b class="kw">$1</b>」')
-    .replace(/([^\s、。をはがにでも「」：>]{2,20}?)(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, (m, t) => NG.test(t) || /^[）)れ]/.test(t) || /→|ほしい|する$|書く/.test(t) || (t.split('（').length !== t.split('）').length) || t.includes('<') ? m : `<b class="kw">${t}</b>`);
+    .replace(/([^\s、。をはがにでも「」：>]{2,30}?)(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, (m, t) => { const pre = (t.match(/^(それぞれ|また|なお|これを|ここで)/) || [''])[0]; t = t.slice(pre.length); return pre + kwTerm(m.slice(pre.length), t); })
+    .replace(/を([一-龯ァ-ヶー]{3,15})、(?=[^。\n]*?を<b class="kw">)/g, 'を<b class="kw">$1</b>、'); // 「AをX、BをYといいます」のXも
+  function kwTerm(m, t) { return NG.test(t) || t.length < 2 || /^[）)れ]/.test(t) || /→|ほしい|する$|書く/.test(t) || (t.split('（').length !== t.split('）').length) || t.includes('<') ? m : `<b class="kw">${t}</b>`; }
   if (inline) return raw.replace(/\u200b/g, '').split(/\n\s*\n/).map(b => kw(b.split('\n').map(x => x.trim()).join(''))).filter(Boolean).join('<br>');
   return out.map(l => {
     const t = l.trim(); if (!t) return '';
