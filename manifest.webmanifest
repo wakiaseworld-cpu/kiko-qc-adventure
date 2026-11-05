@@ -1,1 +1,1 @@
-{"name":"キコのQCぼうけん","short_name":"キコQC","start_url":"./","display":"standalone","background_color":"#edf5e9","theme_color":"#d6e9cf","icons":[{"src":"icon.png","sizes":"192x192 512x512","type":"image/png","purpose":"any"}]}
+{"name":"キコのQCぼうけん","short_name":"キコQC","start_url":"./","display":"standalone","background_color":"#edf5e9","theme_color":"#3f6e51","icons":[{"src":"icon-qc.png","sizes":"192x192 512x512","type":"image/png","purpose":"any"}]}
