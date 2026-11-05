@@ -615,7 +615,7 @@ async function loadContent() {
   let key = lsGet('qc-key');
   const tok = lsGet('kh-token');
   if (!key && tok) {
-    try { const j = await (await fetch(KH_API, { method: 'POST', body: JSON.stringify({ token: tok, fn: '__boot' }) })).json(); DIAG.boot = j.ok ? 'ok / qcKey ' + (j.v && j.v.qcKey ? 'あり' : 'なし') : 'NG ' + (j.error || ''); if (j.ok && j.v && j.v.qcKey) { key = j.v.qcKey; lsSet('qc-key', key); } } catch (e) { DIAG.boot = '通信エラー ' + e.message; }
+    try { const j = await (await fetch(KH_API, { method: 'POST', body: JSON.stringify({ token: tok, fn: '__boot' }) })).json(); let v = j.v; if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) {} } const qk = (v && (v.qcKey || v.qckey || v.QC_KEY)) || j.qcKey; DIAG.boot = j.ok ? 'ok / qcKey ' + (qk ? 'あり' : 'なし（' + Object.keys(v || {}).join(',') + '）') : 'NG ' + (j.error || ''); if (j.ok && qk) { key = qk; lsSet('qc-key', key); } } catch (e) { DIAG.boot = '通信エラー ' + e.message; }
   }
   if (!key) return null;
   try {
