@@ -213,3 +213,6 @@ details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
 .numans{font-weight:700;margin:4px 0 8px}.numans.ok{color:var(--good)}.numans.ng{color:var(--bad)}
 .tip{margin:8px 0 0;font-size:.88rem}
 .tip-h{display:inline-block;background:var(--stamp);color:#fff;font-size:.72rem;padding:0 6px;border-radius:4px;margin-right:6px;vertical-align:.1em}
+.steps{display:flex;flex-direction:column;gap:4px;font-variant-numeric:tabular-nums}
+.steps .st{padding:4px 8px;border-left:3px solid var(--line);overflow-wrap:anywhere}
+.steps .st.last{border-left-color:var(--good);font-weight:700;background:var(--good-bg);border-radius:0 6px 6px 0}

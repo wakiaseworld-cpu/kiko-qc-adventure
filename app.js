@@ -34,17 +34,28 @@ const slash = s => s ? s.replace(/-/g, '/') : '—';
 // ---------- 記録 ----------
 const initial = () => ({
   version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
-  crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {},
+  crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {}, gradAwarded: {},
   days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, updatedAt: 0
 });
 const COUNTERS = ['crickets', 'specialFood', 'drillCorrect', 'drillCounter'];
 const DEV = (() => { let d = lsGet('kiko-qc-dev'); if (!d) { d = Math.random().toString(36).slice(2, 10); lsSet('kiko-qc-dev', d); } return d; })();
-function totals(st) { for (const k of COUNTERS) st[k] = Object.values(st.cnt || {}).reduce((a, c) => a + (c[k] || 0), 0); return st; }
+// 問題ごとのごほうび（同じ問題・同じ日は1回、卒業は1回）は記録の数から出すので、2台で解いても二重にならない
+function totals(st) {
+  for (const k of COUNTERS) st[k] = Object.values(st.cnt || {}).reduce((a, c) => a + (c[k] || 0), 0);
+  st.crickets += Object.keys(st.practiceAwarded || {}).length + 3 * Object.keys(st.gradAwarded || {}).length;
+  return st;
+}
+const histBy = h => h ? (h.by ? h : { ...h, by: { base: { a: h.attempts || 0, c: h.correct || 0 } } }) : null;
+function histSum(h) { h.attempts = 0; h.correct = 0; for (const v of Object.values(h.by)) { h.attempts += v.a || 0; h.correct += v.c || 0; } return h; }
 function bump(k, n = 1) { const c = state.cnt[DEV] || (state.cnt[DEV] = {}); c[k] = (c[k] || 0) + n; totals(state); }
 function normalize(obj) {
   const s = { ...initial(), ...(obj || {}) };
   s.boss = migrateBoss(s.boss);
   if (!s.cnt || !Object.keys(s.cnt).length) { s.cnt = { base: {} }; for (const k of COUNTERS) s.cnt.base[k] = s[k] || 0; }
+  if (!s.gradAwarded) { // 前の版：問題ごとのコオロギは端末の数に入っていたので、その分を引いて記録の数から出す形にする
+    s.gradAwarded = {}; let n = Object.keys(s.practiceAwarded || {}).length;
+    for (const c of Object.values(s.cnt)) { const t = Math.min(n, c.crickets || 0); c.crickets = (c.crickets || 0) - t; n -= t; }
+  }
   totals(s);
   if (!obj?.version || obj.version < 2) { s.active = [...(s.days || [])]; s.version = 2; }
   return s;
@@ -58,19 +69,25 @@ function mergeState(a, b) {
   const m = { ...older, ...newer };
   for (const k of ['cleared', 'read', 'days', 'active', 'dailyDone']) m[k] = uniq([...(a[k] || []), ...(b[k] || [])]);
   m.boss = migrateBoss([...(a.boss || []), ...(b.boss || [])]);
-  m.history = { ...older.history };
-  for (const [id, h] of Object.entries(newer.history || {})) {
-    const o = m.history[id];
-    m.history[id] = !o || (h.attempts || 0) >= (o.attempts || 0) ? h : o;
+  // 解いた回数は端末ごとに持って足し合わせる
+  m.history = {};
+  for (const id of new Set([...Object.keys(a.history || {}), ...Object.keys(b.history || {})])) {
+    const x = histBy((a.history || {})[id]), y = histBy((b.history || {})[id]), by = {};
+    for (const h of [x, y]) if (h) for (const [d, v] of Object.entries(h.by)) { const t = by[d] || (by[d] = { a: 0, c: 0 }); t.a = Math.max(t.a, v.a || 0); t.c = Math.max(t.c, v.c || 0); }
+    m.history[id] = histSum({ by, last: [x?.last, y?.last].filter(Boolean).sort().pop(), at: Math.max(x?.at || 0, y?.at || 0) });
   }
   m.review = {};
   for (const id of new Set([...Object.keys(a.review || {}), ...Object.keys(b.review || {})])) {
     const x = (a.review || {})[id], y = (b.review || {})[id];
     if (!x || !y) { m.review[id] = x || y; continue; }
+    // 復習の状態は、最後に答えた時刻（なければ日付）が新しいほうを使う
+    const tx = x.at || 0, ty = y.at || 0;
+    if (tx || ty) { m.review[id] = tx >= ty ? x : y; continue; }
     const lx = (a.history || {})[id]?.last || '', ly = (b.history || {})[id]?.last || '';
     m.review[id] = lx > ly ? x : ly > lx ? y : (newer === a ? x : y);
   }
   m.practiceAwarded = { ...older.practiceAwarded, ...newer.practiceAwarded };
+  m.gradAwarded = { ...(a.gradAwarded || {}), ...(b.gradAwarded || {}) };
   m.dayCount = { ...(a.dayCount || {}) };
   for (const [d, n] of Object.entries(b.dayCount || {})) m.dayCount[d] = Math.max(m.dayCount[d] || 0, n);
   m.bestStreak = Math.max(a.bestStreak || 0, b.bestStreak || 0);
@@ -269,18 +286,19 @@ function todayPlan() {
 
 // ---------- 答えの記録 ----------
 function reward(qid, correct) {
-  const h = state.history[qid] || { attempts: 0, correct: 0 };
-  h.attempts++; if (correct) h.correct++; h.last = today(); state.history[qid] = h;
+  const h = histBy(state.history[qid]) || { by: {} }, mine = h.by[DEV] || (h.by[DEV] = { a: 0, c: 0 });
+  mine.a++; if (correct) mine.c++; h.last = today(); h.at = Date.now(); state.history[qid] = histSum(h);
   const r = state.review[qid];
   if (correct) {
     const key = `${today()}:${qid}`;
-    if (!state.practiceAwarded[key]) { bump('crickets'); state.practiceAwarded[key] = true; }
+    if (!state.practiceAwarded[key]) state.practiceAwarded[key] = true;
     if (r && r.step < 3 && r.due && r.due <= today()) {
       r.step++;
-      if (r.step >= 3) { r.due = null; bump('crickets', 3); } else r.due = addDays(today(), r.step === 1 ? 3 : 7);
+      if (r.step >= 3) { r.due = null; state.gradAwarded[qid] = true; } else r.due = addDays(today(), r.step === 1 ? 3 : 7);
+      r.at = Date.now();
     }
-  } else state.review[qid] = { step: 0, due: addDays(today(), 1) };
-  markActive(isEx(qid)); save();
+  } else state.review[qid] = { step: 0, due: addDays(today(), 1), at: Date.now() };
+  totals(state); markActive(isEx(qid)); save();
 }
 
 // ---------- 画面の状態 ----------
@@ -477,7 +495,7 @@ function quizView() {
   <div class="question-card"><h3>${esc(q.stem)}</h3>
     ${q.drill ? '<button class="button secondary small" id="calc-toggle">' + ic('calc') + '電卓</button><div id="calc-slot"></div>' : ''}
     <div class="choices">${choices}</div>
-    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(q.explanation)}</p>${q.drill ? tipHtml(q.tip) : `<button class="button secondary small" id="read-detail">${ic('book')}この節の解説</button>`}</div>
+    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain">${q.drill ? stepsHtml(q.explanation) : `<p class="pre">${esc(q.explanation)}</p>`}${q.drill ? tipHtml(q.tip) : `<button class="button secondary small" id="read-detail">${ic('book')}この節の解説</button>`}</div>
     <button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
   </div>`);
   document.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(+b.dataset.answer));
@@ -709,6 +727,8 @@ const DRILL_TIPS = {
   oneside: '片側規格は 3s で割る。規格幅がないので 6s は使わない',
   corr: 'r は −1〜＋1。Sxy がマイナスなら r もマイナス'
 };
+// 計算の解説は1行ずつ区切り、最後の行（答え）を目立たせる
+const stepsHtml = t => `<div class="steps">${String(t).split('\n').filter(x => x.trim()).map((l, i, a) => `<div class="st${i === a.length - 1 ? ' last' : ''}">${esc(l)}</div>`).join('')}</div>`;
 const tipHtml = t => t ? `<p class="tip"><b class="tip-h">つまずき</b>${esc(t)}</p>` : '';
 // 数字入力の答え合わせ：問題の「小数第○位」（なければ答えの桁）で四捨五入して合えば正解
 function numOk(input, ansStr, stem) {
@@ -730,7 +750,7 @@ function drillView() {
     ${useInput ? `<form class="numform" id="num-form"><input class="input" id="num-in" inputmode="decimal" autocomplete="off" placeholder="答え" value="${esc(drill.input || '')}" ${drill.done ? 'disabled' : ''}><button class="button" ${drill.done ? 'disabled' : ''}>答える</button></form>
     ${drill.done ? `<p class="numans ${drill.picked === drill.answer ? 'ok' : 'ng'}">答え ${esc(drill.options[drill.answer])}</p>` : ''}`
     : `<div class="choices">${drill.options.map((v, i) => `<button class="choice ${drill.done ? (i === drill.answer ? 'correct' : i === drill.picked ? 'wrong' : '') : ''}" data-opt="${i}" ${drill.done ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(v)}</button>`).join('')}</div>`}
-    ${drill.done ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(drill.explanation)}</p>${tipHtml(drill.tip)}</div><button class="button full" id="again">次の問題 →</button>` : ''}
+    ${drill.done ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain">${stepsHtml(drill.explanation)}${tipHtml(drill.tip)}</div><button class="button full" id="again">次の問題 →</button>` : ''}
   </div>` : '<p class="empty">分野を選んでね</p>'}
   <div class="button-row"><button class="button secondary" id="ntable">${ic('bar')}正規分布表</button><button class="button secondary" id="calc-toggle">${ic('calc')}電卓</button></div>
   <div id="calc-slot"></div>`);
@@ -834,20 +854,37 @@ function render() {
 }
 
 // ---------- 中身の読み込み（暗号化された content.bin にも対応） ----------
+async function fetchKey(tok) {
+  try {
+    const j = await (await fetch(KH_API, { method: 'POST', body: JSON.stringify({ token: tok, fn: '__boot' }) })).json();
+    let v = j.v; if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) {} }
+    const qk = (v && (v.qcKey || v.qckey || v.QC_KEY)) || j.qcKey;
+    DIAG.boot = j.ok ? 'ok / qcKey ' + (qk ? 'あり' : 'なし（' + Object.keys(v || {}).join(',') + '）') : 'NG ' + (j.error || '');
+    if (!j.ok) DIAG.kind = 'auth'; else if (!qk) DIAG.kind = 'nokey';
+    if (j.ok && qk) { lsSet('qc-key', qk); return qk; }
+  } catch (e) { DIAG.boot = '通信エラー ' + e.message; DIAG.kind = 'net'; }
+  return null;
+}
 async function loadContent() {
   if (window.QC_CONTENT) return window.QC_CONTENT;
-  let key = lsGet('qc-key');
   const tok = lsGet('kh-token');
-  if (!key && tok) {
-    try { const j = await (await fetch(KH_API, { method: 'POST', body: JSON.stringify({ token: tok, fn: '__boot' }) })).json(); let v = j.v; if (typeof v === 'string') { try { v = JSON.parse(v); } catch (_) {} } const qk = (v && (v.qcKey || v.qckey || v.QC_KEY)) || j.qcKey; DIAG.boot = j.ok ? 'ok / qcKey ' + (qk ? 'あり' : 'なし（' + Object.keys(v || {}).join(',') + '）') : 'NG ' + (j.error || ''); if (j.ok && qk) { key = qk; lsSet('qc-key', key); } } catch (e) { DIAG.boot = '通信エラー ' + e.message; }
+  let key = lsGet('qc-key'), cached = !!key;
+  if (!key && tok) key = await fetchKey(tok);
+  if (!key) { if (!tok) DIAG.kind = 'login'; return null; }
+  let buf;
+  try { buf = await (await fetch('content.bin', { cache: 'no-cache' })).arrayBuffer(); } catch (e) { DIAG.decrypt = '通信エラー ' + e.message; DIAG.kind = 'net'; return null; }
+  for (let i = 0; i < 2; i++) {
+    try {
+      const raw = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+      const k = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+      return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, k, buf.slice(12))));
+    } catch (e) {
+      DIAG.decrypt = '復号エラー ' + (e.name || e.message); DIAG.kind = 'decrypt'; lsSet('qc-key', null);
+      if (!cached || !tok || !(key = await fetchKey(tok))) return null; // 古い鍵だったときは、取り直して1回だけやり直す
+      cached = false;
+    }
   }
-  if (!key) return null;
-  try {
-    const buf = await (await fetch('content.bin', { cache: 'no-cache' })).arrayBuffer();
-    const raw = Uint8Array.from(atob(key), c => c.charCodeAt(0));
-    const k = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
-    return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, k, buf.slice(12))));
-  } catch (e) { DIAG.decrypt = '復号エラー ' + (e.name || e.message); lsSet('qc-key', null); return null; }
+  return null;
 }
 const DIAG = {};
 
@@ -862,7 +899,9 @@ async function boot() {
   if (!DATA) {
     const hasTok = !!lsGet('kh-token');
     const diag = `<p class="muted">確認用：合言葉 ${hasTok ? 'あり' : 'なし'} ／ 鍵 ${DIAG.boot || '未取得'}${DIAG.decrypt ? ' ／ ' + esc(DIAG.decrypt) : ''}</p>`;
-    const showLogin = () => { $('app').innerHTML = `<div class="panel"><h2>${hasTok ? '中身を開けませんでした' : 'ログインしてね'}</h2>${hasTok ? '<p class="muted">合言葉はあるが鍵を受け取れませんでした。もう一度ログインしてください</p>' : ''}${loginBox()}${diag}</div>`; bindLogin(); chrome(); };
+    const kind = DIAG.kind || (hasTok ? 'nokey' : 'login');
+    const title = { login: 'ログインしてね', net: '通信できませんでした', auth: 'ログインが切れました', nokey: '鍵を受け取れませんでした', decrypt: '中身を開けませんでした' }[kind];
+    const showLogin = () => { $('app').innerHTML = `<div class="panel"><h2>${title}</h2>${kind !== 'login' ? '<button class="button full" id="retry-boot">もう一度</button>' : ''}${kind === 'net' ? '' : loginBox()}${diag}</div>`; bindLogin(); if ($('retry-boot')) $('retry-boot').onclick = () => location.reload(); chrome(); };
     document.querySelectorAll('#tabs button').forEach(b => b.onclick = showLogin);
     $('sync-btn').onclick = showLogin;
     showLogin(); return;
