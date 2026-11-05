@@ -1,0 +1,637 @@
+/* キコのQCぼうけん */
+(() => {
+'use strict';
+
+// ---------- 設定 ----------
+const KH_API = 'https://script.google.com/macros/s/AKfycbyNjses9QwU8f575Ua9wLQ-Io2WirPL1S7JeZxGMR5IBaDmWynmoPgIwM6bN5ZLl5Fp8g/exec';
+const KH_LOGIN_PAGE = '../kikohouse-app/';
+const STORE = 'kiko-qc-v1';
+const DEFAULT_EXAM = '2026-12-19';
+const CALC_CHAPTERS = [2, 5, 6, 7, 8];
+const KANA = 'アイウエ';
+
+let DATA, SECS, CHAPS;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const lsGet = k => { try { return localStorage.getItem(k); } catch (_) { return null; } };
+const lsSet = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (_) {} };
+
+// ---------- 日付 ----------
+const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const today = () => iso(new Date());
+const dayDelta = (a, b) => Math.round((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 86400000);
+const addDays = (s, n) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return iso(d); };
+const slash = s => s ? s.replace(/-/g, '/') : '—';
+
+// ---------- 記録 ----------
+const initial = () => ({
+  version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
+  crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {},
+  days: [], active: [], bestStreak: 0, lastSection: null, updatedAt: 0
+});
+function normalize(obj) {
+  const s = { ...initial(), ...(obj || {}) };
+  if (!obj?.version || obj.version < 2) { s.active = [...(s.days || [])]; s.version = 2; }
+  return s;
+}
+let state;
+try { state = normalize(JSON.parse(lsGet(STORE) || 'null')); } catch (_) { state = initial(); }
+
+const uniq = a => [...new Set(a)].sort();
+function mergeState(a, b) {
+  const [newer, older] = (a.updatedAt || 0) >= (b.updatedAt || 0) ? [a, b] : [b, a];
+  const m = { ...older, ...newer };
+  for (const k of ['cleared', 'read', 'days', 'active']) m[k] = uniq([...(a[k] || []), ...(b[k] || [])]);
+  m.boss = [...new Set([...(a.boss || []), ...(b.boss || [])])].sort((x, y) => x - y);
+  m.history = { ...older.history };
+  for (const [id, h] of Object.entries(newer.history || {})) {
+    const o = m.history[id];
+    m.history[id] = !o || (h.attempts || 0) >= (o.attempts || 0) ? h : o;
+  }
+  m.practiceAwarded = { ...older.practiceAwarded, ...newer.practiceAwarded };
+  for (const k of ['crickets', 'specialFood', 'drillCorrect', 'drillCounter', 'bestStreak']) m[k] = Math.max(a[k] || 0, b[k] || 0);
+  return m;
+}
+
+let syncTimer = null;
+function save() {
+  state.updatedAt = Date.now();
+  lsSet(STORE, JSON.stringify(state));
+  clearTimeout(syncTimer);
+  if (sync.token && sync.ok) syncTimer = setTimeout(pushCloud, 1500);
+}
+
+// ---------- 同期（キコハウスのログインを使う） ----------
+const sync = { token: null, ok: false, status: 'local', at: null };
+async function api(fn, v) {
+  const body = { token: sync.token, fn };
+  if (v !== undefined) body.v = v;
+  const r = await fetch(KH_API, { method: 'POST', body: JSON.stringify(body) });
+  return r.json();
+}
+async function pullCloud() {
+  sync.token = lsGet('kh-token');
+  if (!sync.token) { sync.status = 'nologin'; chrome(); return; }
+  try {
+    const j = await api('qc_load');
+    if (j.error === 'auth') { sync.status = 'expired'; sync.ok = false; chrome(); return; }
+    if (!j.ok) { sync.status = 'notready'; sync.ok = false; chrome(); return; }
+    sync.ok = true;
+    if (j.v) {
+      const cloud = normalize(typeof j.v === 'string' ? JSON.parse(j.v) : j.v);
+      const merged = mergeState(state, cloud);
+      const changed = JSON.stringify(merged) !== JSON.stringify(state);
+      state = merged;
+      lsSet(STORE, JSON.stringify(state));
+      if (changed && !quiz) render();
+      if ((cloud.updatedAt || 0) < (state.updatedAt || 0) || changed) pushCloud();
+    } else pushCloud();
+    sync.status = 'synced'; sync.at = Date.now();
+  } catch (_) { sync.status = navigator.onLine ? 'notready' : 'offline'; }
+  chrome();
+}
+async function pushCloud() {
+  if (!sync.token || !sync.ok) return;
+  try {
+    const j = await api('qc_save', JSON.stringify(state));
+    if (j.error === 'auth') { sync.status = 'expired'; sync.ok = false; }
+    else if (j.ok) { sync.status = 'synced'; sync.at = Date.now(); }
+  } catch (_) { sync.status = 'offline'; }
+  chrome();
+}
+const syncLabel = () => ({ synced: '☁ 同期中', nologin: '☁ ログイン', expired: '☁ 再ログイン', notready: '端末内保存', offline: 'オフライン', local: '端末内保存' }[sync.status]);
+
+// ---------- 学習の時期 ----------
+function phase() {
+  const t = today(), left = dayDelta(state.exam, t);
+  if (left <= 14) return { n: 4, name: '直前期', chapters: null, note: '復習と仕上げ' };
+  if (t < '2026-11-14') return { n: 1, name: '第1期', chapters: CALC_CHAPTERS, note: '計算の章' };
+  if (t < '2026-12-02') return { n: 2, name: '第2期', chapters: CALC_CHAPTERS, note: '計算の章' };
+  return { n: 3, name: '第3期', chapters: null, note: '全章をまわす' };
+}
+const chapterLabel = chs => chs ? '第' + chs.join('・') + '章' : '全章';
+
+// ---------- ヘルパー ----------
+const has = (arr, k) => arr.includes(k);
+const secBy = id => SECS.find(s => s.id === id);
+const qBy = id => { for (const s of SECS) { const q = s.questions.find(q => q.id === id); if (q) return { ...q, section: s }; } return null; };
+const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const chTitle = id => CHAPS.find(c => c.id === id)?.title || '';
+function level() { let l = 1, t = 0, step = 20; while (t + step <= state.crickets) { t += step; l++; step += 10; } return { level: l, base: t, next: t + step }; }
+function streak() { let n = 0, d = today(); if (!state.days.includes(d)) d = addDays(d, -1); while (state.days.includes(d)) { n++; d = addDays(d, -1); } return n; }
+function markActive() { if (!state.active.includes(today())) state.active.push(today()); }
+function markStreakDay() {
+  if (!state.days.includes(today())) { state.days.push(today()); state.days.sort(); }
+  state.bestStreak = Math.max(state.bestStreak, streak());
+}
+const idleDays = () => state.active.length ? dayDelta(today(), state.active[state.active.length - 1]) : 0;
+
+function due() {
+  return Object.entries(state.review)
+    .filter(([, v]) => v && v.step < 3 && v.due && v.due <= today())
+    .map(([id, v]) => ({ ...qBy(id), due: v.due, step: v.step }))
+    .filter(q => q.id).sort((a, b) => a.due.localeCompare(b.due));
+}
+function capByChapter(items, size, max = 4) {
+  const taken = [], counts = {};
+  for (const q of items) { if (taken.length >= size) break; const c = q.section.chapter; if ((counts[c] || 0) < max) { taken.push(q); counts[c] = (counts[c] || 0) + 1; } }
+  for (const q of items) { if (taken.length >= size) break; if (!taken.includes(q)) taken.push(q); }
+  return taken;
+}
+function chapterMissRate(ch) {
+  let a = 0, c = 0;
+  for (const s of SECS.filter(s => s.chapter === ch)) for (const q of s.questions) { const h = state.history[q.id]; if (h) { a += h.attempts; c += h.correct; } }
+  return a ? 1 - c / a : 0.5;
+}
+function dailyQuestions() {
+  const ph = phase(), drillSlots = ph.n === 4 ? 2 : 0, size = 10 - drillSlots;
+  const rev = capByChapter(due(), size);
+  let pool = SECS.filter(s => !ph.chapters || ph.chapters.includes(s.chapter));
+  if (ph.n === 4) pool = [...pool].sort((a, b) => (has(state.boss, a.chapter) - has(state.boss, b.chapter)) || (chapterMissRate(b.chapter) - chapterMissRate(a.chapter)));
+  const regular = [];
+  for (const s of pool) for (const q of s.questions) if (!rev.some(r => r.id === q.id)) regular.push({ ...q, section: s });
+  const order = new Map(regular.map((q, i) => [q.id, i]));
+  if (ph.n !== 4) regular.sort((a, b) => ((state.history[a.id]?.attempts || 0) - (state.history[b.id]?.attempts || 0)) || (order.get(a.id) - order.get(b.id)));
+  let list = rev.concat(capByChapter(regular, size - rev.length));
+  if (list.length < size) for (const s of SECS) for (const q of s.questions) { if (list.length >= size) break; if (!list.some(x => x.id === q.id)) list.push({ ...q, section: s }); }
+  for (let i = 0; i < drillSlots; i++) list.push(drillAsQuestion());
+  return list;
+}
+function todayPlan() {
+  const left = dayDelta(state.exam, today()), notCleared = SECS.filter(s => !has(state.cleared, s.id)).length;
+  const studyDays = Math.max(1, left - 14);
+  return { left, perDay: notCleared ? Math.ceil(notCleared / studyDays) : 0, notCleared };
+}
+
+// ---------- 答えの記録 ----------
+function reward(qid, correct) {
+  const h = state.history[qid] || { attempts: 0, correct: 0 };
+  h.attempts++; if (correct) h.correct++; h.last = today(); state.history[qid] = h;
+  const r = state.review[qid];
+  if (correct) {
+    const key = `${today()}:${qid}`;
+    if (!state.practiceAwarded[key]) { state.crickets++; state.practiceAwarded[key] = true; }
+    if (r && r.step < 3 && r.due && r.due <= today()) {
+      r.step++;
+      if (r.step >= 3) { r.due = null; state.crickets += 3; } else r.due = addDays(today(), r.step === 1 ? 3 : 7);
+    }
+  } else state.review[qid] = { step: 0, due: addDays(today(), 1) };
+  markActive(); save();
+}
+
+// ---------- 画面の状態 ----------
+let page = 'home', sectionId = null, quiz = null, drill = null, stopAnim = null;
+function main(html) {
+  if (stopAnim) { stopAnim(); stopAnim = null; }
+  $('app').innerHTML = html; chrome();
+  document.querySelectorAll('.bottom-nav button').forEach(el => el.classList.toggle('on', el.dataset.page === page));
+}
+function chrome() {
+  const g = $('brand-gecko');
+  if (g && !g.children.length && window.KIKO) g.innerHTML = `<img class="pixel" src="${KIKO.png.tiny.mini}" alt="">`;
+  const l = $('sync-label'); if (l) l.textContent = syncLabel();
+}
+function kikoImg(kind, width = 144, id = '') {
+  const f = KIKO.png.anim[kind] || KIKO.png.anim.awake;
+  return `<img class="pixel" ${id ? `id="${id}"` : ''} src="${f[0]}" width="${width}" alt="キコちゃん">`;
+}
+function animate(id, kind, ms = 300, loops = 0) {
+  const img = $(id); if (!img || !window.KIKO) return;
+  stopAnim = KIKO.play(img, KIKO.png.anim[kind], ms, loops);
+}
+function setPage(p) { page = p; quiz = null; if (p !== 'drill') drill = null; scrollTo(0, 0); render(); }
+
+// ---------- ホーム ----------
+function home() {
+  const lv = level(), plan = todayPlan(), ph = phase(), rev = due().length, sleepy = idleDays() >= 2;
+  const doneToday = state.days.includes(today());
+  const revN = Math.min(rev, ph.n === 4 ? 8 : 10);
+  main(`
+  <section class="hero">
+    <div class="hero-flex">
+      <div class="kiko-col">
+        <div class="kiko-stage">${kikoImg(sleepy ? 'doze' : 'awake', 144, 'home-kiko')}</div>
+        <div class="speech">${sleepy ? 'ひさしぶり…' : doneToday ? 'きょうも ありがとう！' : 'いっしょに がんばろう！'}</div>
+      </div>
+      <div class="hero-lv">
+        <h1>Lv.${lv.level}</h1>
+        <div>🦗 ${state.crickets}匹</div>
+        <div class="progress"><div style="width:${Math.round((state.crickets - lv.base) / (lv.next - lv.base) * 100)}%"></div></div>
+        <div class="muted">あと ${lv.next - state.crickets}匹</div>
+      </div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>${plan.left >= 0 ? plan.left : '—'}</b><small>試験まで（日）</small></div>
+      <div class="stat"><b>${streak()}</b><small>連続（日）</small></div>
+      <div class="stat"><b>${state.cleared.length}/36</b><small>節クリア</small></div>
+    </div>
+  </section>
+  <section class="panel phase">
+    <div class="section-top"><h2>${ph.name}</h2><span class="pill">${esc(ph.note)}</span></div>
+    <p><b>優先：${chapterLabel(ph.chapters)}</b></p>
+    ${plan.notCleared && ph.n < 4 ? `<p class="muted">目安：1日 ${plan.perDay}節</p>` : ''}
+  </section>
+  <section class="panel">
+    <div class="section-top"><h2>☀️ 今日はこれだけ</h2>${doneToday ? '<span class="pill gold">✅ 済</span>' : '<span class="pill">10問</span>'}</div>
+    <p>復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
+    <button class="button full" id="start-daily">▶ はじめる</button>
+  </section>
+  ${state.lastSection ? `<button class="button secondary full" id="resume">📖 つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
+  animate('home-kiko', sleepy ? 'doze' : 'awake', 400);
+  $('start-daily').onclick = () => startQuiz(dailyQuestions(), 'daily');
+  if ($('resume')) $('resume').onclick = () => openLesson(state.lastSection);
+}
+
+// ---------- マップ ----------
+const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`);
+function map() {
+  const ph = phase();
+  let html = '<h2>🗺️ マップ</h2>';
+  for (const ch of CHAPS) {
+    const secs = SECS.filter(s => s.chapter === ch.id), done = secs.filter(s => has(state.cleared, s.id)).length;
+    const pri = ph.chapters && ph.chapters.includes(ch.id);
+    html += `<div class="chapter ${pri ? 'priority' : ''}"><div class="chapter-header"><div class="chapter-num">${ch.id}</div><div style="flex:1"><h3>${esc(ch.title)}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ 🏆' : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}</div><div class="stage-list">`;
+    for (const s of secs) html += `<button class="stage" data-stage="${s.id}"><span>${s.number}. ${esc(s.title)}</span><span class="tag">${has(state.cleared, s.id) ? '✅' : unlockedSec(s) ? '▶' : '🔒'}</span></button>`;
+    html += `</div><button class="button gold full boss-btn" data-boss="${ch.id}" ${done !== secs.length ? 'disabled' : ''}>👑 ボス戦${has(state.boss, ch.id) ? '（再挑戦）' : ''}</button></div>`;
+  }
+  main(html);
+  document.querySelectorAll('[data-stage]').forEach(b => b.onclick = () => openLesson(b.dataset.stage));
+  document.querySelectorAll('[data-boss]').forEach(b => b.onclick = () => startBoss(+b.dataset.boss));
+}
+function openLesson(id, showText = false) {
+  sectionId = id; state.lastSection = id; save();
+  page = 'lesson'; quiz = null; render(); scrollTo(0, 0);
+  if (showText) { const el = $('full-text'); if (el) { el.hidden = false; $('toggle-text').textContent = '📖 閉じる'; } }
+}
+
+// ---------- 節 ----------
+function lesson() {
+  const s = secBy(sectionId); if (!s) return setPage('map');
+  const open = unlockedSec(s);
+  const body = esc(s.text).replace(/^(解説|例題|練習問題|答えと解説)$/gm, '<b class="h">$1</b>');
+  main(`<div class="reading">
+    <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
+    <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">✅</span>' : ''}</div>
+    <div class="summary">${s.summary.map(t => `<p>🌱 ${esc(t)}</p>`).join('')}</div>
+    <div class="button-row"><button id="toggle-text" class="button secondary">📖 読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>✏️ 4問</button></div>
+    ${open ? '' : '<p class="note">🔒 前の節をクリアすると解けます</p>'}
+    <div id="full-text" class="lesson-text" hidden>${body}</div>
+    <div class="button-row"><button id="prev-section" class="button secondary">← 前</button><button id="next-section" class="button secondary">次 →</button></div>
+  </div>`);
+  $('toggle-text').onclick = () => {
+    const el = $('full-text'); el.hidden = !el.hidden;
+    if (!el.hidden && !has(state.read, s.id)) { state.read.push(s.id); save(); }
+    $('toggle-text').textContent = el.hidden ? '📖 読む' : '📖 閉じる';
+  };
+  $('stage-quiz').onclick = () => startQuiz(s.questions.map(q => ({ ...q, section: s })), 'stage', s.id);
+  const i = SECS.findIndex(a => a.id === s.id);
+  $('prev-section').disabled = i === 0;
+  $('prev-section').onclick = () => openLesson(SECS[i - 1].id);
+  $('next-section').onclick = () => i >= SECS.length - 1 ? setPage('map') : openLesson(SECS[i + 1].id);
+}
+
+// ---------- クイズ ----------
+function startQuiz(qs, mode, id) {
+  if (!qs.length) return;
+  quiz = { questions: qs, index: 0, answered: false, mode, answer: null, correctCount: 0, section: id };
+  page = 'quiz'; scrollTo(0, 0); render();
+}
+function startBoss(ch) {
+  const pool = SECS.filter(s => s.chapter === ch).flatMap(s => s.questions.map(q => ({ ...q, section: s })));
+  startQuiz(shuffle(pool).slice(0, 10), 'boss', ch);
+}
+const modeLabel = m => ({ boss: '👑 ボス戦', daily: '☀️ 今日はこれだけ', review: '🔁 復習', stage: '✏️ 節の問題' }[m]);
+function quizView() {
+  if (!quiz) return setPage('home');
+  const q = quiz.questions[quiz.index]; if (!q) return quizFinish();
+  const show = quiz.answered, ok = quiz.answer === q.answer, s = q.section;
+  const choices = q.options.map((opt, i) => `<button class="choice ${show ? (i === q.answer ? 'correct' : i === quiz.answer ? 'wrong' : '') : ''}" data-answer="${i}" ${show ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(opt)}</button>`).join('');
+  main(`<div class="section-top"><div><div class="label">${modeLabel(quiz.mode)}</div><h2>${q.drill ? '🧮 計算' : esc(s.title)}</h2></div><span class="pill">${quiz.index + 1}/${quiz.questions.length}</span></div>
+  <div class="progress"><div style="width:${quiz.index / quiz.questions.length * 100}%"></div></div>
+  <div class="question-card"><h3>${esc(q.stem)}</h3>
+    ${q.drill ? '<button class="button secondary small" id="calc-toggle">🧮 電卓</button><div id="calc-slot"></div>' : ''}
+    <div class="choices">${choices}</div>
+    ${show ? `<div class="explain ${ok ? '' : 'bad'}"><b>${ok ? '✅ せいかい 🦗' : '💡 正解は ' + KANA[q.answer]}</b><p class="pre">${esc(q.explanation)}</p>${q.drill ? '' : `<button class="button secondary small" id="read-detail">📖 この節の解説</button>`}</div>
+    <button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
+  </div>`);
+  document.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(+b.dataset.answer));
+  if ($('calc-toggle')) $('calc-toggle').onclick = () => toggleCalc('calc-slot');
+  if (!show) return;
+  $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; render(); scrollTo(0, 0); };
+  if ($('read-detail')) $('read-detail').onclick = () => modal(`📖 ${s.title}`, `<div class="summary">${s.summary.map(t => `<p>🌱 ${esc(t)}</p>`).join('')}</div><div class="lesson-text">${esc(s.text)}</div>`);
+}
+function answer(i) {
+  if (quiz.answered) return;
+  const q = quiz.questions[quiz.index], ok = i === q.answer;
+  quiz.answered = true; quiz.answer = i; if (ok) quiz.correctCount++;
+  if (q.drill) { if (ok) { state.drillCorrect++; state.drillCounter++; if (state.drillCounter % 2 === 0) state.crickets++; } markActive(); save(); }
+  else reward(q.id, ok);
+  render();
+}
+function quizFinish() {
+  const qz = quiz, n = qz.questions.length, score = Math.round(qz.correctCount / n * 100), pass = score >= 70;
+  let msg = '';
+  if (qz.mode === 'boss') {
+    if (pass && !has(state.boss, qz.section)) { state.boss.push(qz.section); state.boss.sort((a, b) => a - b); state.specialFood++; msg = '🏆 特別なエサをゲット！'; }
+    else msg = pass ? '🏆 クリア！' : '70%でクリア';
+  }
+  if (qz.mode === 'stage') {
+    if (pass && !has(state.cleared, qz.section)) { state.cleared.push(qz.section); msg = '✅ 節クリア！次の節がひらいたよ'; }
+    else if (!pass) msg = '3問正解でクリア';
+  }
+  if (qz.mode === 'daily') { markStreakDay(); msg = `🔥 連続 ${streak()}日`; }
+  save();
+  quiz = null; page = 'finish';
+  main(`<div class="panel center"><h2>${modeLabel(qz.mode)}</h2><div class="score">${qz.correctCount}/${n}</div>
+    <div class="kiko-stage center-stage">${kikoImg(pass ? 'dance' : 'awake', 192, 'finish-kiko')}</div>
+    ${msg ? `<p><b>${msg}</b></p>` : ''}
+    <div class="button-row"><button class="button" id="quiz-home">ホーム</button><button class="button secondary" id="quiz-map">マップ</button></div></div>`);
+  animate('finish-kiko', pass ? 'dance' : 'awake', 300);
+  $('quiz-home').onclick = () => setPage('home');
+  $('quiz-map').onclick = () => setPage('map');
+}
+
+// ---------- 復習 ----------
+function review() {
+  const d = due(), all = Object.values(state.review), grad = all.filter(v => v.step >= 3).length, waiting = all.length - grad - d.length;
+  main(`<h2>🔁 復習ボックス</h2>
+  <div class="stats"><div class="stat"><b>${d.length}</b><small>今日</small></div><div class="stat"><b>${waiting}</b><small>待機中</small></div><div class="stat"><b>${grad}</b><small>卒業</small></div></div>
+  <p class="muted">翌日 → 3日後 → 7日後。3回続けて正解で卒業</p>
+  <button class="button full" id="start-review" ${d.length ? '' : 'disabled'}>▶ 復習する</button>
+  <div class="stage-list" style="margin-top:12px">${d.slice(0, 20).map(q => `<div class="stage"><span>${esc(q.section.title)}</span><span class="tag">${'●'.repeat(q.step)}${'○'.repeat(3 - q.step)}</span></div>`).join('') || '<p class="empty">今日の復習はありません</p>'}</div>`);
+  $('start-review').onclick = () => startQuiz(capByChapter(d, 10), 'review');
+}
+
+// ---------- 正規分布表 ----------
+function upperP(k) { // 標準正規分布の上側確率
+  const z = Math.abs(k) / Math.SQRT2, t = 1 / (1 + 0.3275911 * z);
+  const erfc = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429)))) * Math.exp(-z * z);
+  const p = erfc / 2; return k >= 0 ? p : 1 - p;
+}
+const P4 = k => Number(upperP(k).toFixed(4));
+function normalTable() {
+  let h = '<div class="ntable-wrap"><table class="ntable"><tr><th>Kp</th>';
+  for (let c = 0; c < 10; c++) h += `<th>.${c}</th>`;
+  h += '</tr>';
+  for (let r = 0; r <= 30; r++) {
+    h += `<tr><th>${(r / 10).toFixed(1)}</th>`;
+    for (let c = 0; c < 10; c++) h += `<td>${P4(r / 10 + c / 100).toFixed(4).slice(1)}</td>`;
+    h += '</tr>';
+  }
+  return h + '</table></div><p class="muted">Kp（行＋列）→ 上側確率 P</p>';
+}
+
+// ---------- 計算ドリル ----------
+const rand = (a, b) => Math.floor(Math.random() * (b - a + 1)) + a;
+const pick = a => a[rand(0, a.length - 1)];
+const rnd = (n, p = 2) => Number(Number(n).toFixed(p));
+const sum = a => a.reduce((x, y) => x + y, 0);
+const XR = { 2: [1.880, 3.267], 3: [1.023, 2.574], 4: [0.729, 2.282], 5: [0.577, 2.114] };
+
+const DRILLS = [
+  ['stats', '基本統計量'],
+  ['transform', 'データ変換'],
+  ['hist', 'ヒストグラム'],
+  ['normal', '正規分布表'],
+  ['binom', '二項分布'],
+  ['xbar', 'x̄-R管理図'],
+  ['np', 'np管理図'],
+  ['p', 'p管理図'],
+  ['cp', 'Cp'],
+  ['cpk', 'Cpk'],
+  ['oneside', '片側規格'],
+  ['corr', '相関係数']
+];
+function makeDrill(type) {
+  let stem, ans, steps, d = 2, traps = [], options = null;
+  switch (type) {
+    case 'stats': {
+      const n = 5, xs = Array.from({ length: n }, () => rand(4, 16)), m = sum(xs) / n;
+      const S = sum(xs.map(x => (x - m) ** 2)), sub = pick(['mean', 'S', 'V', 's']);
+      const data = xs.join('、');
+      if (sub === 'mean') { stem = `データ ${data} の平均 x̄ は？`; ans = rnd(m, 1); d = 1; steps = `x̄ ＝ 合計 ÷ n\n＝ ${sum(xs)} ÷ ${n}\n＝ ${ans}`; traps = [rnd(m + 1, 1), rnd(m - 1, 1), rnd(sum(xs) / (n - 1), 1)]; }
+      if (sub === 'S') { stem = `データ ${data} の平方和 S は？（小数第1位）`; ans = rnd(S, 1); d = 1; steps = `S ＝ Σx² − (Σx)² ÷ n\n＝ ${sum(xs.map(x => x * x))} − ${sum(xs)}² ÷ ${n}\n＝ ${ans}`; traps = [rnd(S / (n - 1), 1), rnd(S / n, 1), rnd(Math.sqrt(S), 1)]; }
+      if (sub === 'V') { stem = `データ ${data} の不偏分散 V は？（小数第2位）`; ans = rnd(S / (n - 1)); steps = `S ＝ ${rnd(S, 2)}\nV ＝ S ÷ (n−1) ＝ ${rnd(S, 2)} ÷ ${n - 1}\n＝ ${ans}`; traps = [rnd(S / n), rnd(S), rnd(Math.sqrt(S / (n - 1)))]; }
+      if (sub === 's') { stem = `データ ${data} の標準偏差 s は？（小数第2位）`; ans = rnd(Math.sqrt(S / (n - 1))); steps = `S ＝ ${rnd(S, 2)}、V ＝ S ÷ ${n - 1} ＝ ${rnd(S / (n - 1), 3)}\ns ＝ √V ＝ ${ans}`; traps = [rnd(S / (n - 1)), rnd(Math.sqrt(S / n)), rnd(Math.sqrt(S))]; }
+      break;
+    }
+    case 'transform': {
+      const a = rand(5, 9) * 10, h = pick([10, 100]), n = 6, ys = Array.from({ length: n }, () => rand(-4, 9));
+      const Sy = sum(ys.map(y => y * y)) - sum(ys) ** 2 / n, sub = pick(['mean', 'S']);
+      const head = `y ＝ (x − ${a}) × ${h} と変換した。n＝${n}、Σy＝${sum(ys)}、Σy²＝${sum(ys.map(y => y * y))}。`;
+      if (sub === 'mean') { d = 3; ans = rnd(a + sum(ys) / n / h, 3); stem = head + 'もとの平均 x̄ は？'; steps = `ȳ ＝ ${sum(ys)} ÷ ${n} ＝ ${rnd(sum(ys) / n, 3)}\nx̄ ＝ a ＋ ȳ ÷ h ＝ ${a} ＋ ${rnd(sum(ys) / n, 3)} ÷ ${h}\n＝ ${ans}`; traps = [rnd(a + sum(ys) / n, 3), rnd(a + sum(ys) / n * h, 3), rnd(a - sum(ys) / n / h, 3)]; }
+      else { d = 4; ans = rnd(Sy / h / h, 4); stem = head + 'もとの平方和 S は？'; steps = `Sy ＝ Σy² − (Σy)² ÷ n ＝ ${rnd(Sy, 3)}\nS ＝ Sy ÷ h² ＝ ${rnd(Sy, 3)} ÷ ${h * h}\n＝ ${ans}`; traps = [rnd(Sy / h, 4), rnd(Sy, 4), rnd(Sy / h / h / (n - 1), 4)]; }
+      break;
+    }
+    case 'hist': {
+      const u = pick([0.1, 1, 0.01]), dp = u === 1 ? 0 : u === 0.1 ? 1 : 2, mn = rnd(rand(100, 400) * u, dp);
+      d = dp + 1; ans = rnd(mn - u / 2, d);
+      stem = `最小値 ${mn}、測定単位 ${u} のとき、第1区間の下側境界値は？`;
+      steps = `下側境界値 ＝ 最小値 − 測定単位 ÷ 2\n＝ ${mn} − ${u} ÷ 2\n＝ ${ans}`;
+      traps = [rnd(mn - u, d), rnd(mn + u / 2, d), mn];
+      break;
+    }
+    case 'normal': {
+      const sub = pick(['kp', 'p', 'x']);
+      if (sub === 'kp') { const k = rnd(rand(5, 30) / 10 + rand(0, 9) / 100, 2); d = 4; ans = P4(k); stem = `Kp ＝ ${k.toFixed(2)} のとき、上側確率 P は？（正規分布表）`; steps = `表の ${Math.floor(k * 10) / 10} の行、.0${Math.round(k * 100) % 10} の列\nP ＝ ${ans}`; traps = [P4(k + 0.1), P4(k - 0.1), rnd(1 - ans, 4)]; }
+      if (sub === 'p') { const k = rnd(rand(10, 25) / 10 + rand(0, 9) / 100, 2), P = P4(k); d = 2; ans = k; stem = `上側確率 P ＝ ${P.toFixed(4)} となる Kp は？（正規分布表）`; steps = `表の中から ${P.toFixed(4)} を探す\nKp ＝ ${k.toFixed(2)}`; traps = [rnd(k + 0.1), rnd(k - 0.1), rnd(k + 0.01)]; }
+      if (sub === 'x') { const mu = rand(40, 80), sg = pick([2, 4, 5]), k = pick([0.5, 1, 1.5, 2, 2.5]), x = mu + k * sg; d = 4; ans = P4(k); stem = `平均 ${mu}、標準偏差 ${sg} の正規分布。${x} を超える確率は？`; steps = `Kp ＝ (x − μ) ÷ σ ＝ (${x} − ${mu}) ÷ ${sg} ＝ ${k}\n表より P ＝ ${ans}`; traps = [rnd(1 - ans, 4), P4(k / 2), P4(k * sg / 10)]; }
+      break;
+    }
+    case 'binom': {
+      const n = rand(3, 6), p = pick([0.1, 0.2]), k = pick([0, 1, 2]);
+      const C = [1, 1, 2, 6, 24, 120, 720], nCk = C[n] / C[k] / C[n - k];
+      d = 3; ans = rnd(nCk * p ** k * (1 - p) ** (n - k), 3);
+      stem = `不適合品率 ${p * 100}% の工程から ${n} 個取る。不適合品がちょうど ${k} 個の確率は？（小数第3位）`;
+      steps = `P ＝ ${n}C${k} × ${p}^${k} × ${rnd(1 - p, 1)}^${n - k}\n＝ ${nCk} × ${rnd(p ** k, 4)} × ${rnd((1 - p) ** (n - k), 4)}\n＝ ${ans}`;
+      traps = [rnd(p ** k * (1 - p) ** (n - k), 3), rnd(nCk * p ** k, 3), rnd(1 - ans, 3)];
+      break;
+    }
+    case 'xbar': {
+      const n = pick([2, 3, 4, 5]), [A2, D4] = XR[n], X = rnd(rand(200, 800) / 10, 1), R = rnd(rand(10, 60) / 10, 1), sub = pick(['ucl', 'lcl', 'r']);
+      const head = `n＝${n}、x̿＝${X}、R̄＝${R}（A2＝${A2}、D4＝${D4}）。`;
+      if (sub === 'ucl') { ans = rnd(X + A2 * R); stem = head + 'x̄管理図の UCL は？'; steps = `UCL ＝ x̿ ＋ A2 × R̄ ＝ ${X} ＋ ${A2} × ${R}\n＝ ${ans}`; traps = [rnd(X - A2 * R), rnd(X + D4 * R), rnd(X + 3 * R)]; }
+      if (sub === 'lcl') { ans = rnd(X - A2 * R); stem = head + 'x̄管理図の LCL は？'; steps = `LCL ＝ x̿ − A2 × R̄ ＝ ${X} − ${A2} × ${R}\n＝ ${ans}`; traps = [rnd(X + A2 * R), rnd(X - D4 * R), rnd(X - R)]; }
+      if (sub === 'r') { ans = rnd(D4 * R); stem = head + 'R管理図の UCL は？'; steps = `UCL ＝ D4 × R̄ ＝ ${D4} × ${R}\n＝ ${ans}\n（n≦6 では LCL なし）`; traps = [rnd(A2 * R), rnd(X + D4 * R), rnd(D4 * R / 2)]; }
+      break;
+    }
+    case 'np': {
+      const n = pick([50, 100, 200]), pbar = pick([0.02, 0.04, 0.05, 0.1]), np = n * pbar, sd = Math.sqrt(np * (1 - pbar)), lcl = np - 3 * sd, sub = pick(['ucl', 'lcl']);
+      const head = `n＝${n}、p̄＝${pbar} の np管理図。`;
+      if (sub === 'ucl') { ans = rnd(np + 3 * sd); stem = head + 'UCL は？（小数第2位）'; steps = `CL ＝ n p̄ ＝ ${rnd(np, 2)}\nUCL ＝ n p̄ ＋ 3√(n p̄(1−p̄))\n＝ ${rnd(np, 2)} ＋ 3 × √${rnd(np * (1 - pbar), 3)}\n＝ ${ans}`; traps = [rnd(np + sd), rnd(np + 3 * Math.sqrt(np)), rnd(lcl)]; }
+      else { stem = head + 'LCL は？'; steps = `LCL ＝ n p̄ − 3√(n p̄(1−p̄))\n＝ ${rnd(np, 2)} − 3 × √${rnd(np * (1 - pbar), 3)} ＝ ${rnd(lcl)}\n${lcl < 0 ? 'マイナスなので LCL は「なし」' : ''}`; if (lcl < 0) { options = shuffle(['なし', '0', String(rnd(lcl)), String(rnd(np - sd))]); ans = options.indexOf('なし'); } else { ans = rnd(lcl); traps = [rnd(np + 3 * sd), rnd(np - sd), rnd(np - 3 * Math.sqrt(np))]; } }
+      break;
+    }
+    case 'p': {
+      const n = pick([100, 200, 400]), pbar = pick([0.02, 0.05, 0.1]), w = 3 * Math.sqrt(pbar * (1 - pbar) / n);
+      d = 4; ans = rnd(pbar + w, 4);
+      stem = `n＝${n}、p̄＝${pbar} の p管理図。UCL は？（小数第4位）`;
+      steps = `UCL ＝ p̄ ＋ 3√(p̄(1−p̄) ÷ n)\n＝ ${pbar} ＋ 3 × √(${rnd(pbar * (1 - pbar), 4)} ÷ ${n})\n＝ ${ans}`;
+      traps = [rnd(pbar + 3 * Math.sqrt(pbar * (1 - pbar)), 4), rnd(pbar + Math.sqrt(pbar * (1 - pbar) / n), 4), rnd(pbar - w, 4)];
+      break;
+    }
+    case 'cp': {
+      const s = pick([0.5, 1, 2, 2.5]), c = rand(40, 60), half = rnd(s * pick([2, 3, 4, 5, 6]), 1), SL = rnd(c - half, 1), SU = rnd(c + half, 1);
+      ans = rnd((SU - SL) / (6 * s)); stem = `規格 ${SL}〜${SU}、標準偏差 s＝${s}。Cp は？（小数第2位）`;
+      steps = `Cp ＝ (SU − SL) ÷ 6s ＝ (${SU} − ${SL}) ÷ (6 × ${s})\n＝ ${ans}`; traps = [rnd((SU - SL) / (3 * s)), rnd((SU - SL) / s / 6 * 2), rnd(half / (6 * s))];
+      break;
+    }
+    case 'cpk': {
+      const s = pick([1, 2]), c = 50, half = s * pick([4, 5, 6]), off = pick([-2, -1, 1, 2]) * s, m = c + off, SL = c - half, SU = c + half;
+      const near = Math.min(SU - m, m - SL); ans = rnd(near / (3 * s));
+      stem = `規格 ${SL}〜${SU}、平均 x̄＝${m}、s＝${s}。Cpk は？（小数第2位）`;
+      steps = `近いほうの規格までの距離 ＝ min(${SU} − ${m}, ${m} − ${SL}) ＝ ${near}\nCpk ＝ ${near} ÷ (3 × ${s})\n＝ ${ans}`;
+      traps = [rnd(Math.max(SU - m, m - SL) / (3 * s)), rnd((SU - SL) / (6 * s)), rnd(near / (6 * s))];
+      break;
+    }
+    case 'oneside': {
+      const s = pick([1, 2, 0.5]), m = rand(20, 60), dist = s * pick([3, 4, 5]), up = Math.random() < 0.5;
+      const lim = up ? m + dist : m - dist; ans = rnd(dist / (3 * s));
+      stem = `${up ? '上限' : '下限'}規格 ${up ? 'SU' : 'SL'}＝${lim} だけ。x̄＝${m}、s＝${s}。工程能力指数は？`;
+      steps = `${up ? '(SU − x̄)' : '(x̄ − SL)'} ÷ 3s ＝ ${dist} ÷ (3 × ${s})\n＝ ${ans}`;
+      traps = [rnd(dist / (6 * s)), rnd(dist / s), rnd(2 * dist / (3 * s))];
+      break;
+    }
+    case 'corr': {
+      const Sx = pick([16, 25, 36, 64, 100]), Sy = pick([4, 9, 16, 25, 49]), r = pick([-0.9, -0.8, -0.6, 0.5, 0.6, 0.7, 0.8, 0.9]);
+      const Sxy = rnd(r * Math.sqrt(Sx * Sy), 2); ans = rnd(Sxy / Math.sqrt(Sx * Sy));
+      stem = `Sx＝${Sx}、Sy＝${Sy}、Sxy＝${Sxy}。相関係数 r は？（小数第2位）`;
+      steps = `r ＝ Sxy ÷ √(Sx × Sy) ＝ ${Sxy} ÷ √(${Sx} × ${Sy})\n＝ ${Sxy} ÷ ${rnd(Math.sqrt(Sx * Sy), 2)}\n＝ ${ans}`;
+      traps = [rnd(-ans), rnd(Sxy / (Sx * Sy), 3), rnd(Sxy / Math.sqrt(Sx) )];
+      break;
+    }
+  }
+  if (!options) {
+    const vals = [ans];
+    for (const t of traps.concat([rnd(ans * 1.2, d), rnd(ans * 0.8, d), rnd(ans + 1, d)])) if (vals.length < 4 && Number.isFinite(t) && !vals.includes(t)) vals.push(t);
+    options = shuffle(vals.map(v => String(v)));
+    ans = options.indexOf(String(vals[0]));
+  }
+  return { type, stem, options, answer: ans, explanation: steps };
+}
+function drillAsQuestion(type) {
+  const t = type || pick(DRILLS)[0];
+  return { ...makeDrill(t), id: 'drill', drill: true, section: { title: '計算', chapter: 0 } };
+}
+function drillView() {
+  main(`<h2>🧮 計算ドリル</h2>
+  <div class="drill-types">${DRILLS.map(([id, t]) => `<button class="chip ${drill?.type === id ? 'on' : ''}" data-type="${id}">${esc(t)}</button>`).join('')}</div>
+  ${drill ? `<div class="question-card"><h3>${esc(drill.stem)}</h3>
+    <div class="choices">${drill.options.map((v, i) => `<button class="choice ${drill.done ? (i === drill.answer ? 'correct' : i === drill.picked ? 'wrong' : '') : ''}" data-opt="${i}" ${drill.done ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(v)}</button>`).join('')}</div>
+    ${drill.done ? `<div class="explain ${drill.picked === drill.answer ? '' : 'bad'}"><b>${drill.picked === drill.answer ? '✅ せいかい' : '💡 正解は ' + KANA[drill.answer]}</b><p class="pre">${esc(drill.explanation)}</p></div><button class="button full" id="again">次の問題 →</button>` : ''}
+  </div>` : '<p class="empty">分野を選んでね</p>'}
+  <div class="button-row"><button class="button secondary" id="ntable">📊 正規分布表</button><button class="button secondary" id="calc-toggle">🧮 電卓</button></div>
+  <div id="calc-slot"></div>`);
+  document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { drill = makeDrill(b.dataset.type); render(); });
+  $('ntable').onclick = () => modal('📊 正規分布表', normalTable());
+  $('calc-toggle').onclick = () => toggleCalc('calc-slot');
+  if (!drill) return;
+  document.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => {
+    drill.done = true; drill.picked = +b.dataset.opt;
+    if (drill.picked === drill.answer) { state.drillCorrect++; state.drillCounter++; if (state.drillCounter % 2 === 0) state.crickets++; }
+    markActive(); save(); render();
+  });
+  if ($('again')) $('again').onclick = () => { drill = makeDrill(drill.type); render(); };
+}
+
+// ---------- 電卓（入力した順に計算する型） ----------
+function toggleCalc(slotId) {
+  const slot = $(slotId); if (!slot) return;
+  if (slot.innerHTML) { slot.innerHTML = ''; return; }
+  slot.innerHTML = `<div class="calc"><div class="calc-screen" id="calc-screen">0</div><div class="calc-grid">${['C', '√', '←', '÷', '7', '8', '9', '×', '4', '5', '6', '−', '1', '2', '3', '＋', '0', '.', '±', '='].map(k => `<button data-key="${k}" class="${'÷×−＋='.includes(k) ? 'op' : ''}">${k}</button>`).join('')}</div></div>`;
+  let cur = '0', acc = null, op = null, fresh = true;
+  const show = v => { $('calc-screen').textContent = v; };
+  const fmt = n => String(Number(n.toPrecision(10)));
+  const apply = (a, b) => op === '＋' ? a + b : op === '−' ? a - b : op === '×' ? a * b : op === '÷' ? a / b : b;
+  slot.querySelectorAll('[data-key]').forEach(b => b.onclick = () => {
+    const k = b.dataset.key;
+    if (/^[0-9]$/.test(k)) { cur = fresh || cur === '0' ? k : cur + k; fresh = false; return show(cur); }
+    if (k === '.') { if (fresh) { cur = '0'; fresh = false; } if (!cur.includes('.')) cur += '.'; return show(cur); }
+    if (k === 'C') { cur = '0'; acc = null; op = null; fresh = true; return show(cur); }
+    if (k === '←') { if (!fresh) cur = cur.slice(0, -1) || '0'; return show(cur); }
+    if (k === '±') { cur = fmt(-Number(cur)); return show(cur); }
+    if (k === '√') { cur = fmt(Math.sqrt(Number(cur))); fresh = true; return show(cur); }
+    const n = Number(cur);
+    if (k === '=') { if (op !== null) { cur = fmt(apply(acc, n)); acc = null; op = null; } fresh = true; return show(cur); }
+    acc = op !== null && !fresh ? apply(acc, n) : (op !== null ? acc : n);
+    op = k; fresh = true; cur = fmt(acc); show(cur);
+  });
+}
+
+// ---------- おへや ----------
+const DECO = [['🚩', '品質の旗'], ['📚', 'データの本棚'], ['🛠️', '七つ道具'], ['🗂️', '新七つ道具'], ['🎲', '確率サイコロ'], ['📈', '管理図'], ['🏆', 'トロフィー'], ['🧩', '散布図クッション']];
+function room() {
+  const lv = level(), molts = Math.floor((lv.level - 1) / 3);
+  main(`<h2>🦎 おへや</h2>
+  <div class="room-scene"><div class="room-deco">${DECO.map(([e], i) => has(state.boss, i + 1) ? e : '').join(' ')}</div>${kikoImg('awake', 192, 'room-kiko')}<b>キコちゃん Lv.${lv.level}</b><div>🦗 ${state.crickets}匹 ／ ✨ 脱皮 ${molts}回 ／ 🍖 特別なエサ ${state.specialFood}</div></div>
+  <div class="panel"><div class="decor">${DECO.map(([e, n], i) => `<div class="tile ${has(state.boss, i + 1) ? '' : 'locked'}">${has(state.boss, i + 1) ? e : '❔'}<small>${esc(n)}</small></div>`).join('')}<div class="tile ${state.boss.length === 8 ? '' : 'locked'}">${state.boss.length === 8 ? '👑' : '❔'}<small>王冠</small></div></div></div>
+  <div class="button-row"><button class="button" id="kiko-dance">🎶 あそぶ</button>${state.specialFood ? '<button class="button secondary" id="kiko-food">🍖 エサをあげる</button>' : ''}</div>`);
+  animate('room-kiko', 'awake', 400);
+  $('kiko-dance').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'dance', 300, 3); };
+  if ($('kiko-food')) $('kiko-food').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'food', 300, 1); };
+}
+
+// ---------- 設定 ----------
+function settings() {
+  const st = { synced: 'キコハウスのアカウントで同期中', nologin: 'キコハウスでログインすると同期できます', expired: 'ログインが切れました', notready: '同期の準備中（いまは端末内に保存）', offline: 'オフライン（端末内に保存）', local: '端末内に保存' }[sync.status];
+  main(`<h2>⚙️ 設定</h2>
+  <div class="panel"><h3>📅 試験日</h3><input class="input" type="date" value="${esc(state.exam)}" id="exam-input"><button class="button full" id="exam-save" style="margin-top:10px">保存</button></div>
+  <div class="panel"><h3>☁️ 同期</h3><p>${st}</p>
+    ${['nologin', 'expired'].includes(sync.status) ? `<a class="button full" href="${KH_LOGIN_PAGE}">キコハウスでログイン</a>` : `<button class="button secondary full" id="sync-now">今すぐ同期</button>`}</div>
+  <div class="panel"><h3>📊 記録</h3>
+    <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/8</p>
+    <p>解いた問題 ${Object.keys(state.history).length}/144 ／ 計算 ${state.drillCorrect}問</p>
+    <p>勉強した日 ${state.active.length}日 ／ 最高連続 ${state.bestStreak}日</p></div>
+  <div class="panel"><h3>💾 バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
+  $('exam-save').onclick = () => { const v = $('exam-input').value; if (!v) return; state.exam = v; save(); modal('保存しました', `試験日：${esc(slash(v))}<br>残り ${dayDelta(v, today())}日`); };
+  if ($('sync-now')) $('sync-now').onclick = async () => { await pullCloud(); render(); };
+  $('backup-export').onclick = () => { const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `kiko-qc-${today()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); };
+  $('backup-import').onclick = () => $('backup-file').click();
+  $('backup-file').onchange = async e => {
+    const f = e.target.files[0]; if (!f) return;
+    try { const o = JSON.parse(await f.text()); if (!o || !Array.isArray(o.cleared)) throw Error('形式が違います'); if (!confirm('今の記録と合わせて読み込みますか？')) return; state = mergeState(state, normalize(o)); save(); render(); modal('読み込みました', ''); }
+    catch (err) { modal('読み込めませんでした', esc(err.message)); }
+  };
+}
+
+// ---------- 共通 ----------
+function modal(title, html) { $('modal-title').textContent = title; $('modal-content').innerHTML = html; $('modal-overlay').classList.remove('hidden'); }
+function closeModal() { $('modal-overlay').classList.add('hidden'); }
+function render() {
+  ({ home, map, lesson, quiz: quizView, review, drill: drillView, room, settings }[page] || (() => {}))();
+}
+
+// ---------- 中身の読み込み（暗号化された content.bin にも対応） ----------
+async function loadContent() {
+  if (window.QC_CONTENT) return window.QC_CONTENT;
+  let key = lsGet('qc-key');
+  const tok = lsGet('kh-token');
+  if (!key && tok) {
+    try { const j = await (await fetch(KH_API, { method: 'POST', body: JSON.stringify({ token: tok, fn: '__boot' }) })).json(); if (j.ok && j.v && j.v.qcKey) { key = j.v.qcKey; lsSet('qc-key', key); } } catch (_) {}
+  }
+  if (!key) return null;
+  try {
+    const buf = await (await fetch('content.bin', { cache: 'no-cache' })).arrayBuffer();
+    const raw = Uint8Array.from(atob(key), c => c.charCodeAt(0));
+    const k = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+    return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, k, buf.slice(12))));
+  } catch (_) { lsSet('qc-key', null); return null; }
+}
+
+async function boot() {
+  $('modal-close').onclick = closeModal;
+  $('modal-overlay').onclick = e => { if (e.target === $('modal-overlay')) closeModal(); };
+  document.querySelectorAll('.bottom-nav button').forEach(b => b.onclick = () => setPage(b.dataset.page));
+  $('sync-btn').onclick = () => setPage('settings');
+  DATA = await loadContent();
+  if (!DATA) {
+    $('app').innerHTML = `<div class="panel center"><h2>ログインしてね</h2><p>キコハウスでログインすると開けます</p><a class="button full" href="${KH_LOGIN_PAGE}">キコハウスへ</a></div>`;
+    chrome(); return;
+  }
+  SECS = DATA.sections; CHAPS = DATA.chapters;
+  render();
+  pullCloud();
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pullCloud(); });
+}
+boot();
+})();
