@@ -100,7 +100,7 @@ button:focus-visible{outline:3px solid var(--ink);outline-offset:2px}
 /* マップ */
 .chapter-header{display:flex;align-items:center;gap:10px;margin-bottom:10px}
 .chapter h3{margin:0}
-.chapter-num{width:34px;height:34px;display:grid;place-items:center;font-family:var(--dot);background:#cfe9bf;color:#1b2433;flex-shrink:0;box-shadow:0 -2px 0 0 var(--outline),0 2px 0 0 var(--outline),-2px 0 0 0 var(--outline),2px 0 0 0 var(--outline)}
+.chapter-num{width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-family:var(--dot);background:#cfe9bf;color:#1b2433;flex-shrink:0;box-shadow:0 -2px 0 0 var(--outline),0 2px 0 0 var(--outline),-2px 0 0 0 var(--outline),2px 0 0 0 var(--outline)}
 .chapter.priority{border:2px solid var(--ink)}
 .stage-list{display:grid;gap:6px}
 .stage{width:100%;display:flex;justify-content:space-between;align-items:center;gap:8px;text-align:left;font:inherit;font-size:.9rem;background:var(--soft);border:1px solid var(--line);border-radius:10px;padding:9px 12px;color:var(--fg)}
@@ -204,3 +204,12 @@ details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
 .ld i{font-style:normal;animation:blink .9s steps(1) infinite}.ld i:nth-child(2){animation-delay:.3s}.ld i:nth-child(3){animation-delay:.6s}
 @keyframes blink{0%{opacity:1}50%{opacity:.15}}
 @media (prefers-reduced-motion:reduce){.ld i{animation:none}}
+.chapter-num small{font-size:.6em;margin-left:1px}
+.seg{display:flex;gap:0;margin:4px 0 10px;border:1px solid var(--ink);border-radius:10px;overflow:hidden;width:fit-content}
+.seg button{font:inherit;font-size:.85rem;font-weight:700;border:0;background:var(--surface);color:var(--ink);padding:6px 16px}
+.seg button.on{background:var(--ink);color:var(--ink-fg)}
+.numform{display:flex;gap:8px;margin:10px 0}
+.numform .input{flex:1;min-width:0;font-size:16px}
+.numans{font-weight:700;margin:4px 0 8px}.numans.ok{color:var(--good)}.numans.ng{color:var(--bad)}
+.tip{margin:8px 0 0;font-size:.88rem}
+.tip-h{display:inline-block;background:var(--stamp);color:#fff;font-size:.72rem;padding:0 6px;border-radius:4px;margin-right:6px;vertical-align:.1em}

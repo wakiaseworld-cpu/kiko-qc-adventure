@@ -6,6 +6,13 @@
 const KH_API = 'https://script.google.com/macros/s/AKfycbyNjses9QwU8f575Ua9wLQ-Io2WirPL1S7JeZxGMR5IBaDmWynmoPgIwM6bN5ZLl5Fp8g/exec';
 const KH_LOGIN_PAGE = 'https://script.google.com/macros/s/AKfycbwGFSEDqGuH_FKt_GU6cnn_cy3TdvQwr2Kin4J1wGF1c0FYyZk1-yV2L_78apqwod-t-w/exec?link=1&back=qc';
 const STORE = 'kiko-qc-v1';
+const TRAIN_START = '2026-12-02'; // 訓練が始まる日
+// マップのステージ：大きい章は分ける（1章→4・4・3節、3章と4章→4・3節）。ほかの章はそのまま
+const SPLIT = { 1: [4, 4, 3], 3: [4, 3], 4: [4, 3] };
+const STAGE_IDS = [1, 2, 3, 4, 5, 6, 7, 8].flatMap(c => SPLIT[c] ? SPLIT[c].map((_, i) => c + 'abc'[i]) : [String(c)]);
+const stageSort = a => [...new Set(a)].sort((x, y) => STAGE_IDS.indexOf(x) - STAGE_IDS.indexOf(y));
+// 前の版のボス記録（章の番号）を、ステージの記録に置きかえる
+const migrateBoss = b => stageSort((b || []).flatMap(x => typeof x === 'number' ? (SPLIT[x] ? SPLIT[x].map((_, i) => x + 'abc'[i]) : [String(x)]) : [x]));
 const DEFAULT_EXAM = '2026-12-19';
 const CALC_CHAPTERS = [2, 5, 6, 7, 8];
 const KANA = 'アイウエ';
@@ -28,10 +35,17 @@ const slash = s => s ? s.replace(/-/g, '/') : '—';
 const initial = () => ({
   version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
   crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {},
-  days: [], active: [], dayCount: {}, dailyDone: [], bestStreak: 0, lastSection: null, updatedAt: 0
+  days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, updatedAt: 0
 });
+const COUNTERS = ['crickets', 'specialFood', 'drillCorrect', 'drillCounter'];
+const DEV = (() => { let d = lsGet('kiko-qc-dev'); if (!d) { d = Math.random().toString(36).slice(2, 10); lsSet('kiko-qc-dev', d); } return d; })();
+function totals(st) { for (const k of COUNTERS) st[k] = Object.values(st.cnt || {}).reduce((a, c) => a + (c[k] || 0), 0); return st; }
+function bump(k, n = 1) { const c = state.cnt[DEV] || (state.cnt[DEV] = {}); c[k] = (c[k] || 0) + n; totals(state); }
 function normalize(obj) {
   const s = { ...initial(), ...(obj || {}) };
+  s.boss = migrateBoss(s.boss);
+  if (!s.cnt || !Object.keys(s.cnt).length) { s.cnt = { base: {} }; for (const k of COUNTERS) s.cnt.base[k] = s[k] || 0; }
+  totals(s);
   if (!obj?.version || obj.version < 2) { s.active = [...(s.days || [])]; s.version = 2; }
   return s;
 }
@@ -43,7 +57,7 @@ function mergeState(a, b) {
   const [newer, older] = (a.updatedAt || 0) >= (b.updatedAt || 0) ? [a, b] : [b, a];
   const m = { ...older, ...newer };
   for (const k of ['cleared', 'read', 'days', 'active', 'dailyDone']) m[k] = uniq([...(a[k] || []), ...(b[k] || [])]);
-  m.boss = [...new Set([...(a.boss || []), ...(b.boss || [])])].sort((x, y) => x - y);
+  m.boss = migrateBoss([...(a.boss || []), ...(b.boss || [])]);
   m.history = { ...older.history };
   for (const [id, h] of Object.entries(newer.history || {})) {
     const o = m.history[id];
@@ -59,7 +73,11 @@ function mergeState(a, b) {
   m.practiceAwarded = { ...older.practiceAwarded, ...newer.practiceAwarded };
   m.dayCount = { ...(a.dayCount || {}) };
   for (const [d, n] of Object.entries(b.dayCount || {})) m.dayCount[d] = Math.max(m.dayCount[d] || 0, n);
-  for (const k of ['crickets', 'specialFood', 'drillCorrect', 'drillCounter', 'bestStreak']) m[k] = Math.max(a[k] || 0, b[k] || 0);
+  m.bestStreak = Math.max(a.bestStreak || 0, b.bestStreak || 0);
+  // コオロギなどの数は端末ごとに持ち、合計を出す（2台で別々に進めても足し合わせになる）
+  m.cnt = {};
+  for (const src of [a, b]) for (const [dev, c] of Object.entries(src.cnt || {})) { const t = m.cnt[dev] || (m.cnt[dev] = {}); for (const k of COUNTERS) t[k] = Math.max(t[k] || 0, c[k] || 0); }
+  totals(m);
   return m;
 }
 
@@ -155,8 +173,9 @@ const syncLabel = () => ({ synced: ic('cloud') + '同期中', saving: ic('cloud'
 function phase() {
   const t = today(), left = dayDelta(state.exam, t);
   if (left <= 14) return { n: 4, name: '直前期', chapters: null, note: '復習と仕上げ' };
-  if (left >= 36) return { n: 1, name: '第1期', chapters: CALC_CHAPTERS, note: '計算の章' };
-  if (left >= 18) return { n: 2, name: '第2期', chapters: CALC_CHAPTERS, note: '計算の章' };
+  // 第1期・第2期は計算の章。訓練が始まる日（TRAIN_START）か、試験18日前のどちらか早いほうから第3期
+  if (t < '2026-11-14' && left >= 36) return { n: 1, name: '第1期', chapters: CALC_CHAPTERS, note: '計算の章' };
+  if (t < TRAIN_START && left >= 18) return { n: 2, name: '第2期', chapters: CALC_CHAPTERS, note: '計算の章' };
   return { n: 3, name: '第3期', chapters: null, note: '全章をまわす' };
 }
 const chapterLabel = chs => chs ? '第' + chs.join('・') + '章' : '全章';
@@ -184,6 +203,18 @@ function examplesOf(s) {
 const tight = t => String(t).replace(/([^\x00-\x7f]) (?=[^\x00-\x7f])/g, '$1'); // 改行の跡のすき間を詰める
 const isEx = id => /-ex\d+$/.test(id);
 const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+let STAGES = [];
+function buildStages() {
+  STAGES = [];
+  for (const ch of CHAPS) {
+    const secs = SECS.filter(s => s.chapter === ch.id), parts = SPLIT[ch.id] || [secs.length];
+    let k = 0;
+    parts.forEach((n, i) => { STAGES.push({ id: SPLIT[ch.id] ? ch.id + 'abc'[i] : String(ch.id), chapter: ch.id, part: SPLIT[ch.id] ? i + 1 : 0, title: ch.title, secs: secs.slice(k, k + n) }); k += n; });
+  }
+}
+const stageOf = s => STAGES.find(st => st.secs.includes(s));
+const stageName = st => st.part ? `${st.title}（${'①②③'[st.part - 1]}）` : st.title;
+const chBossDone = c => STAGES.filter(st => st.chapter === c).every(st => has(state.boss, st.id));
 const chTitle = id => CHAPS.find(c => c.id === id)?.title || '';
 function level() { let l = 1, t = 0, step = 20; while (t + step <= state.crickets) { t += step; l++; step += 10; } return { level: l, base: t, next: t + step }; }
 function streak() { let n = 0, d = today(); if (!state.days.includes(d)) d = addDays(d, -1); while (state.days.includes(d)) { n++; d = addDays(d, -1); } return n; }
@@ -220,7 +251,7 @@ function dailyQuestions() {
   const ph = phase(), drillSlots = ph.n === 4 ? 2 : 0, size = 10 - drillSlots;
   const rev = capByChapter(due(), size);
   let pool = SECS.filter(s => !ph.chapters || ph.chapters.includes(s.chapter));
-  if (ph.n === 4) pool = [...pool].sort((a, b) => (has(state.boss, a.chapter) - has(state.boss, b.chapter)) || (chapterMissRate(b.chapter) - chapterMissRate(a.chapter)));
+  if (ph.n === 4) pool = [...pool].sort((a, b) => (has(state.boss, stageOf(a).id) - has(state.boss, stageOf(b).id)) || (chapterMissRate(b.chapter) - chapterMissRate(a.chapter)));
   const regular = [];
   for (const s of pool) for (const q of s.questions) if (!rev.some(r => r.id === q.id)) regular.push({ ...q, section: s });
   const order = new Map(regular.map((q, i) => [q.id, i]));
@@ -243,10 +274,10 @@ function reward(qid, correct) {
   const r = state.review[qid];
   if (correct) {
     const key = `${today()}:${qid}`;
-    if (!state.practiceAwarded[key]) { state.crickets++; state.practiceAwarded[key] = true; }
+    if (!state.practiceAwarded[key]) { bump('crickets'); state.practiceAwarded[key] = true; }
     if (r && r.step < 3 && r.due && r.due <= today()) {
       r.step++;
-      if (r.step >= 3) { r.due = null; state.crickets += 3; } else r.due = addDays(today(), r.step === 1 ? 3 : 7);
+      if (r.step >= 3) { r.due = null; bump('crickets', 3); } else r.due = addDays(today(), r.step === 1 ? 3 : 7);
     }
   } else state.review[qid] = { step: 0, due: addDays(today(), 1) };
   markActive(isEx(qid)); save();
@@ -333,18 +364,19 @@ const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.
 function map() {
   const ph = phase();
   let html = '<h2>' + ic('map') + 'マップ</h2>';
-  for (const ch of CHAPS) {
-    const secs = SECS.filter(s => s.chapter === ch.id), done = secs.filter(s => has(state.cleared, s.id)).length;
-    const pri = ph.chapters && ph.chapters.includes(ch.id);
-    const open = openChaps ? openChaps.has(ch.id) : (ph.chapters ? pri : (secBy(state.lastSection)?.chapter || 1) === ch.id);
-    html += `<details class="chapter ${pri ? 'priority' : ''}" data-ch="${ch.id}" ${open ? 'open' : ''}><summary class="chapter-header"><div class="chapter-num">${ch.id}</div><div style="flex:1"><h3>${esc(ch.title)}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ ' + ic('trophy') : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}<span class="chev"></span></summary><div class="stage-list">`;
+  const cur = secBy(state.lastSection), curSt = cur ? stageOf(cur).id : STAGE_IDS[0];
+  for (const st of STAGES) {
+    const ch = { id: st.id }, secs = st.secs, done = secs.filter(s => has(state.cleared, s.id)).length;
+    const pri = ph.chapters && ph.chapters.includes(st.chapter);
+    const open = openChaps ? openChaps.has(st.id) : (ph.chapters ? pri && (!st.part || st.id === curSt || !secs.every(s => has(state.cleared, s.id)) && STAGES.filter(x => x.chapter === st.chapter).find(x => !x.secs.every(s => has(state.cleared, s.id))) === st) : curSt === st.id);
+    html += `<details class="chapter ${pri ? 'priority' : ''}" data-ch="${st.id}" ${open ? 'open' : ''}><summary class="chapter-header"><div class="chapter-num">${st.chapter}${st.part ? '<small>' + '①②③'[st.part - 1] + '</small>' : ''}</div><div style="flex:1"><h3>${esc(stageName(st))}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ ' + ic('trophy') : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}<span class="chev"></span></summary><div class="stage-list">`;
     for (const s of secs) html += `<button class="stage" data-stage="${s.id}"><span>${s.number}. ${esc(s.title)}</span><span class="tag">${has(state.cleared, s.id) ? ic('check') : unlockedSec(s) ? ic('play') : ic('lock')}</span></button>`;
     html += `</div><button class="button gold full boss-btn" data-boss="${ch.id}" ${done !== secs.length ? 'disabled' : ''}>${ic('crown')}ボス戦${has(state.boss, ch.id) ? '（再挑戦）' : ''}</button></details>`;
   }
   main(html);
-  document.querySelectorAll('details.chapter').forEach(d => d.ontoggle = () => { openChaps = new Set([...document.querySelectorAll('details.chapter[open]')].map(x => +x.dataset.ch)); });
+  document.querySelectorAll('details.chapter').forEach(d => d.ontoggle = () => { openChaps = new Set([...document.querySelectorAll('details.chapter[open]')].map(x => x.dataset.ch)); });
   document.querySelectorAll('[data-stage]').forEach(b => b.onclick = () => openLesson(b.dataset.stage));
-  document.querySelectorAll('[data-boss]').forEach(b => b.onclick = () => startBoss(+b.dataset.boss));
+  document.querySelectorAll('[data-boss]').forEach(b => b.onclick = () => startBoss(b.dataset.boss));
 }
 function openLesson(id, showText = false) {
   sectionId = id; state.lastSection = id; save();
@@ -426,9 +458,10 @@ function startQuiz(qs, mode, id) {
   quiz = { questions: qs, index: 0, answered: false, mode, answer: null, correctCount: 0, section: id };
   page = 'quiz'; pushNav(); scrollTo(0, 0); render();
 }
-function startBoss(ch) {
-  const pool = SECS.filter(s => s.chapter === ch).flatMap(s => s.questions.map(q => ({ ...q, section: s })));
-  startQuiz(shuffle(pool).slice(0, 10), 'boss', ch);
+function startBoss(id) {
+  const st = STAGES.find(x => x.id === id); if (!st) return;
+  const pool = st.secs.flatMap(s => s.questions.map(q => ({ ...q, section: s })));
+  startQuiz(shuffle(pool).slice(0, 10), 'boss', id);
 }
 const modeLabel = m => (ic({ boss: 'crown', daily: 'sun', review: 'loop', stage: 'pencil' }[m]) + { boss: 'ボス戦', daily: '今日はこれだけ', review: '復習', stage: '節の問題' }[m]);
 function quizView() {
@@ -442,7 +475,7 @@ function quizView() {
   <div class="question-card"><h3>${esc(q.stem)}</h3>
     ${q.drill ? '<button class="button secondary small" id="calc-toggle">' + ic('calc') + '電卓</button><div id="calc-slot"></div>' : ''}
     <div class="choices">${choices}</div>
-    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(q.explanation)}</p>${q.drill ? '' : `<button class="button secondary small" id="read-detail">${ic('book')}この節の解説</button>`}</div>
+    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(q.explanation)}</p>${q.drill ? tipHtml(q.tip) : `<button class="button secondary small" id="read-detail">${ic('book')}この節の解説</button>`}</div>
     <button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
   </div>`);
   document.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(+b.dataset.answer));
@@ -471,7 +504,7 @@ function answer(i) {
   if (quiz.answered) return;
   const q = quiz.questions[quiz.index], ok = i === q.answer;
   quiz.answered = true; quiz.answer = i; if (ok) quiz.correctCount++;
-  if (q.drill) { if (ok) { state.drillCorrect++; state.drillCounter++; if (state.drillCounter % 2 === 0) state.crickets++; } markActive(); save(); }
+  if (q.drill) { if (ok) { bump('drillCorrect'); bump('drillCounter'); if (state.drillCounter % 2 === 0) bump('crickets'); } markActive(); save(); }
   else reward(q.id, ok);
   render();
 }
@@ -479,7 +512,7 @@ function quizFinish() {
   const qz = quiz, n = qz.questions.length, score = Math.round(qz.correctCount / n * 100), pass = score >= 70;
   let msg = '';
   if (qz.mode === 'boss') {
-    if (pass && !has(state.boss, qz.section)) { state.boss.push(qz.section); state.boss.sort((a, b) => a - b); state.specialFood++; msg = '特別なエサをゲット！'; }
+    if (pass && !has(state.boss, qz.section)) { state.boss = stageSort([...state.boss, qz.section]); bump('specialFood'); msg = '特別なエサをゲット！'; }
     else msg = pass ? 'クリア！' : '70%でクリア';
   }
   if (qz.mode === 'stage') {
@@ -657,31 +690,61 @@ function makeDrill(type) {
     options = shuffle(vals.map(v => String(v)));
     ans = options.indexOf(String(vals[0]));
   }
-  return { type, stem, options, answer: ans, explanation: steps };
+  return { type, stem, options, answer: ans, explanation: steps, tip: DRILL_TIPS[type] };
+}
+// つまずきポイント（解説の最後に1行）
+const DRILL_TIPS = {
+  stats: '不偏分散は n ではなく n−1 で割る。標準偏差 s は V の √',
+  transform: '平均は ÷h してから a を足す。平方和は h² で割り、a は関係しない',
+  hist: '下側境界値は「最小値 − 測定単位 ÷ 2」。測定単位そのものを引かない',
+  normal: '表は上側確率。Kp の小数第1位で行、第2位で列を見る',
+  binom: 'nCk × p^k × (1−p)^(n−k)。組み合わせの数 nCk のかけ忘れに注意',
+  xbar: 'x̄管理図は A2、R管理図は D4。係数を取り違えない',
+  np: '√ の中は n p̄(1−p̄)。LCL がマイナスなら「なし」',
+  p: '√ の中は p̄(1−p̄) ÷ n。n で割るのは √ の中',
+  cp: 'Cp は平均の位置を考えない。規格幅 ÷ 6s',
+  cpk: '平均から近いほうの規格までの距離を 3s で割る（6s ではない）',
+  oneside: '片側規格は 3s で割る。規格幅がないので 6s は使わない',
+  corr: 'r は −1〜＋1。Sxy がマイナスなら r もマイナス'
+};
+const tipHtml = t => t ? `<p class="tip"><b class="tip-h">つまずき</b>${esc(t)}</p>` : '';
+// 数字入力の答え合わせ：問題の「小数第○位」（なければ答えの桁）で四捨五入して合えば正解
+function numOk(input, ansStr, stem) {
+  const v = Number(String(input).replace(/[０-９．]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/[−ー－]/g, '-').trim());
+  const a = Number(ansStr); if (!Number.isFinite(v) || !Number.isFinite(a) || String(input).trim() === '') return false;
+  const m = String(stem || '').match(/小数第([1-4１-４])位/), dec = m ? Number(m[1].replace(/[１-４]/, c => c.charCodeAt(0) - 0xFF10)) : (ansStr.split('.')[1] || '').length;
+  return Math.abs(v - a) <= (dec ? 0.5 * 10 ** -dec : 0) + 1e-9;
 }
 function drillAsQuestion(type) {
   const t = type || pick(DRILLS)[0];
   return { ...makeDrill(t), id: 'drill', drill: true, section: { title: '計算', chapter: 0 } };
 }
 function drillView() {
+  const inputMode = lsGet('qc-drill-input') === '1', useInput = inputMode && drill && Number.isFinite(Number(drill.options[drill.answer]));
   main(`<h2>${ic('calc')}計算ドリル</h2>
   <div class="drill-types">${DRILLS.map(([id, t]) => `<button class="chip ${drill?.type === id ? 'on' : ''}" data-type="${id}">${esc(t)}</button>`).join('')}</div>
+  <div class="seg"><button class="${inputMode ? '' : 'on'}" data-mode="0">4択</button><button class="${inputMode ? 'on' : ''}" data-mode="1">数字入力</button></div>
   ${drill ? `<div class="question-card"><h3>${esc(drill.stem)}</h3>
-    <div class="choices">${drill.options.map((v, i) => `<button class="choice ${drill.done ? (i === drill.answer ? 'correct' : i === drill.picked ? 'wrong' : '') : ''}" data-opt="${i}" ${drill.done ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(v)}</button>`).join('')}</div>
-    ${drill.done ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(drill.explanation)}</p></div><button class="button full" id="again">次の問題 →</button>` : ''}
+    ${useInput ? `<form class="numform" id="num-form"><input class="input" id="num-in" inputmode="decimal" autocomplete="off" placeholder="答え" value="${esc(drill.input || '')}" ${drill.done ? 'disabled' : ''}><button class="button" ${drill.done ? 'disabled' : ''}>答える</button></form>
+    ${drill.done ? `<p class="numans ${drill.picked === drill.answer ? 'ok' : 'ng'}">答え ${esc(drill.options[drill.answer])}</p>` : ''}`
+    : `<div class="choices">${drill.options.map((v, i) => `<button class="choice ${drill.done ? (i === drill.answer ? 'correct' : i === drill.picked ? 'wrong' : '') : ''}" data-opt="${i}" ${drill.done ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(v)}</button>`).join('')}</div>`}
+    ${drill.done ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(drill.explanation)}</p>${tipHtml(drill.tip)}</div><button class="button full" id="again">次の問題 →</button>` : ''}
   </div>` : '<p class="empty">分野を選んでね</p>'}
   <div class="button-row"><button class="button secondary" id="ntable">${ic('bar')}正規分布表</button><button class="button secondary" id="calc-toggle">${ic('calc')}電卓</button></div>
   <div id="calc-slot"></div>`);
   document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { drill = makeDrill(b.dataset.type); render(); });
+  document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { lsSet('qc-drill-input', b.dataset.mode === '1' ? '1' : null); if (drill && !drill.done) drill.input = ''; render(); });
   $('ntable').onclick = () => modal(ic('bar') + '正規分布表', normalTable());
   $('calc-toggle').onclick = () => toggleCalc('calc-slot');
   if (!drill) return;
-  document.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => {
-    drill.done = true; drill.picked = +b.dataset.opt;
-    if (drill.picked === drill.answer) { state.drillCorrect++; state.drillCounter++; if (state.drillCounter % 2 === 0) state.crickets++; }
+  const finishDrill = picked => {
+    drill.done = true; drill.picked = picked;
+    if (drill.picked === drill.answer) { bump('drillCorrect'); bump('drillCounter'); if (state.drillCounter % 2 === 0) bump('crickets'); }
     markActive(); save(); render();
-  });
-  if (drill.done) typeInto('rpg-msg', drill.picked === drill.answer ? 'せいかい！ キコは うれしそう！' : `ざんねん… せいかいは ${KANA[drill.answer]} だよ`);
+  };
+  document.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => finishDrill(+b.dataset.opt));
+  if ($('num-form')) $('num-form').onsubmit = e => { e.preventDefault(); const v = $('num-in').value; if (!v.trim()) return; drill.input = v; finishDrill(numOk(v, drill.options[drill.answer], drill.stem) ? drill.answer : -1); };
+  if (drill.done) typeInto('rpg-msg', drill.picked === drill.answer ? 'せいかい！ キコは うれしそう！' : `ざんねん… せいかいは ${useInput ? drill.options[drill.answer] : KANA[drill.answer]} だよ`);
   if ($('again')) $('again').onclick = () => { drill = makeDrill(drill.type); render(); };
 }
 
@@ -714,8 +777,8 @@ const DECO = [['flag', '品質の旗'], ['books', 'データの\u200b本棚'], [
 function room() {
   const lv = level(), molts = Math.floor((lv.level - 1) / 3);
   main(`<h2>${ic('gecko')}おへや</h2>
-  <div class="room-scene"><div class="room-deco">${DECO.map(([e], i) => has(state.boss, i + 1) ? ic(e, 'big') : '').join('')}</div>${kikoImg('awake', 192, 'room-kiko')}<div class="room-info"><b>キコちゃん Lv.${lv.level}</b><div class="room-stats"><span>${ic('cricket')}${state.crickets}匹</span><span>${ic('sparkle')}脱皮 ${molts}回</span><span>${ic('meat')}特別なエサ ${state.specialFood}</span></div></div></div>
-  <div class="panel"><div class="decor">${DECO.map(([e, n], i) => `<div class="tile ${has(state.boss, i + 1) ? '' : 'locked'}">${ic(has(state.boss, i + 1) ? e : 'question', 'big')}<small>${esc(n)}</small></div>`).join('')}<div class="tile ${state.boss.length === 8 ? '' : 'locked'}">${ic(state.boss.length === 8 ? 'crown' : 'question', 'big')}<small>王冠</small></div></div></div>
+  <div class="room-scene"><div class="room-deco">${DECO.map(([e], i) => chBossDone(i + 1) ? ic(e, 'big') : '').join('')}</div>${kikoImg('awake', 192, 'room-kiko')}<div class="room-info"><b>キコちゃん Lv.${lv.level}</b><div class="room-stats"><span>${ic('cricket')}${state.crickets}匹</span><span>${ic('sparkle')}脱皮 ${molts}回</span><span>${ic('meat')}特別なエサ ${state.specialFood}</span></div></div></div>
+  <div class="panel"><div class="decor">${DECO.map(([e, n], i) => `<div class="tile ${chBossDone(i + 1) ? '' : 'locked'}">${ic(chBossDone(i + 1) ? e : 'question', 'big')}<small>${esc(n)}</small></div>`).join('')}<div class="tile ${state.boss.length === STAGE_IDS.length ? '' : 'locked'}">${ic(state.boss.length === STAGE_IDS.length ? 'crown' : 'question', 'big')}<small>王冠</small></div></div></div>
   <div class="button-row"><button class="button" id="kiko-dance">${ic('music')}あそぶ</button>${state.specialFood ? '<button class="button secondary" id="kiko-food">' + ic('meat') + 'エサをあげる</button>' : ''}</div>`);
   animate('room-kiko', 'awake', 400);
   $('kiko-dance').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'dance', 300, 3); };
@@ -730,7 +793,7 @@ function settings() {
   <div class="panel"><h3>${ic('cloud')}同期</h3><p>${st}</p>${sync.err && sync.status !== 'synced' ? `<p class="muted">${esc(sync.err)}</p>` : ''}
     ${['nologin', 'expired'].includes(sync.status) ? loginBox() : `<div class="button-row"><button class="button secondary" id="sync-now">今すぐ同期</button><button class="button secondary" id="copy-token">合言葉をコピー</button></div>`}</div>
   <div class="panel"><h3>${ic('bar')}記録</h3>
-    <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/8</p>
+    <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/${STAGE_IDS.length}</p>
     <p>解いた問題 ${Object.keys(state.history).filter(id => !isEx(id)).length}/144 ／ 計算 ${state.drillCorrect}問</p>
     <p>勉強した日 ${state.active.length}日 ／ 最高連続 ${state.bestStreak}日</p></div>
   <div class="panel"><h3>${ic('disk')}バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
@@ -802,7 +865,7 @@ async function boot() {
     $('sync-btn').onclick = showLogin;
     showLogin(); return;
   }
-  SECS = DATA.sections; CHAPS = DATA.chapters;
+  SECS = DATA.sections; CHAPS = DATA.chapters; buildStages();
   render();
   pullCloud();
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pullCloud(); else flushNow(); });
