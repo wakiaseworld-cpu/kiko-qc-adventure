@@ -182,10 +182,19 @@ function reward(qid, correct) {
 
 // ---------- 画面の状態 ----------
 let page = 'home', sectionId = null, quiz = null, drill = null, stopAnim = null;
+let typeTimer = null;
+function typeInto(id, text) {
+  const el = $(id); if (!el) return; clearInterval(typeTimer);
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { el.textContent = text; return; }
+  let i = 0; el.textContent = '';
+  typeTimer = setInterval(() => { el.textContent = text.slice(0, ++i); if (i >= text.length) clearInterval(typeTimer); }, 60);
+}
 function main(html) {
   if (stopAnim) { stopAnim(); stopAnim = null; }
+  clearInterval(typeTimer);
   $('app').innerHTML = html; chrome();
-  document.querySelectorAll('.bottom-nav button').forEach(el => el.classList.toggle('on', el.dataset.page === page));
+  document.querySelectorAll('#tabs button').forEach(el => el.classList.toggle('on', el.dataset.page === page));
+  document.body.dataset.page = page;
 }
 function chrome() {
   const g = $('brand-gecko');
@@ -204,41 +213,33 @@ function setPage(p) { page = p; quiz = null; if (p !== 'drill') drill = null; sc
 
 // ---------- ホーム ----------
 function home() {
-  const lv = level(), plan = todayPlan(), ph = phase(), rev = due().length, sleepy = idleDays() >= 2;
+  const lv = level(), plan = todayPlan(), ph = phase(), rev = due().length, idle = idleDays();
+  const h = new Date().getHours(), night = h >= 20 || h < 6, sleeping = night || idle >= 2;
   const doneToday = state.days.includes(today());
   const revN = Math.min(rev, ph.n === 4 ? 8 : 10);
+  const bub = idle >= 2 ? 'ひさしぶり…' : night ? 'ねむい… zzz' : doneToday ? 'きょうも おつかれ！' : plan.left >= 0 ? `試験まで あと${plan.left}日` : 'がんばろう！';
   main(`
-  <section class="hero">
-    <div class="hero-flex">
-      <div class="kiko-col">
-        <div class="kiko-stage">${kikoImg(sleepy ? 'doze' : 'awake', 144, 'home-kiko')}</div>
-        <div class="speech">${sleepy ? 'ひさしぶり…' : doneToday ? 'きょうも ありがとう！' : 'いっしょに がんばろう！'}</div>
-      </div>
-      <div class="hero-lv">
-        <h1>Lv.${lv.level}</h1>
-        <div>🦗 ${state.crickets}匹</div>
-        <div class="progress"><div style="width:${Math.round((state.crickets - lv.base) / (lv.next - lv.base) * 100)}%"></div></div>
-        <div class="muted">あと ${lv.next - state.crickets}匹</div>
-      </div>
-    </div>
-    <div class="stats">
-      <div class="stat"><b>${plan.left >= 0 ? plan.left : '—'}</b><small>試験まで（日）</small></div>
-      <div class="stat"><b>${streak()}</b><small>連続（日）</small></div>
-      <div class="stat"><b>${state.cleared.length}/36</b><small>節クリア</small></div>
-    </div>
-  </section>
-  <section class="panel phase">
-    <div class="section-top"><h2>${ph.name}</h2><span class="pill">${esc(ph.note)}</span></div>
-    <p><b>優先：${chapterLabel(ph.chapters)}</b></p>
-    ${plan.notCleared && ph.n < 4 ? `<p class="muted">目安：1日 ${plan.perDay}節</p>` : ''}
+  <section class="yard dotsbg ${night ? 'night' : ''}">
+    <div class="walker ${sleeping ? 'still' : ''}"><span class="kbub dot">${esc(bub)}</span><img class="pxi" id="home-kiko" src="${sleeping ? KIKO.png.tiny.sleep[0] : KIKO.png.walkRight[0]}" alt="キコちゃん"></div>
   </section>
   <section class="panel">
-    <div class="section-top"><h2>☀️ 今日はこれだけ</h2>${doneToday ? '<span class="pill gold">✅ 済</span>' : '<span class="pill">10問</span>'}</div>
-    <p>復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
-    <button class="button full" id="start-daily">▶ はじめる</button>
+    <div class="sh"><h2>キコちゃん Lv.${lv.level}</h2><span class="muted">🦗 ${state.crickets}匹</span></div>
+    <div class="progress"><div style="width:${Math.round((state.crickets - lv.base) / (lv.next - lv.base) * 100)}%"></div></div>
+    <div class="stats">
+      <div class="stat"><b class="dot">${plan.left >= 0 ? plan.left : '—'}</b><small>試験まで</small></div>
+      <div class="stat"><b class="dot">${streak()}</b><small>連続</small></div>
+      <div class="stat"><b class="dot">${state.cleared.length}<i>/36</i></b><small>節クリア</small></div>
+    </div>
   </section>
-  ${state.lastSection ? `<button class="button secondary full" id="resume">📖 つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
-  animate('home-kiko', sleepy ? 'doze' : 'awake', 400);
+  <button class="button pop full" id="start-daily">${doneToday ? '✅ ' : ''}今日はこれだけ（10問）</button>
+  <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
+  <section class="panel strong">
+    <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
+    <p>優先：<b>${chapterLabel(ph.chapters)}</b>${plan.notCleared && ph.n < 4 ? `<span class="muted"> ／ 目安 1日${plan.perDay}節</span>` : ''}</p>
+  </section>
+  ${state.lastSection ? `<button class="mini full" id="resume">📖 つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
+  const img = $('home-kiko');
+  if (img) stopAnim = sleeping ? KIKO.play(img, KIKO.png.tiny.sleep, 440, 0) : KIKO.play(img, KIKO.png.walkRight, 220, 0);
   $('start-daily').onclick = () => startQuiz(dailyQuestions(), 'daily');
   if ($('resume')) $('resume').onclick = () => openLesson(state.lastSection);
 }
@@ -312,10 +313,11 @@ function quizView() {
   <div class="question-card"><h3>${esc(q.stem)}</h3>
     ${q.drill ? '<button class="button secondary small" id="calc-toggle">🧮 電卓</button><div id="calc-slot"></div>' : ''}
     <div class="choices">${choices}</div>
-    ${show ? `<div class="explain ${ok ? '' : 'bad'}"><b>${ok ? '✅ せいかい 🦗' : '💡 正解は ' + KANA[q.answer]}</b><p class="pre">${esc(q.explanation)}</p>${q.drill ? '' : `<button class="button secondary small" id="read-detail">📖 この節の解説</button>`}</div>
+    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(q.explanation)}</p>${q.drill ? '' : `<button class="button secondary small" id="read-detail">📖 この節の解説</button>`}</div>
     <button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
   </div>`);
   document.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(+b.dataset.answer));
+  if (show) typeInto('rpg-msg', ok ? (q.drill ? 'せいかい！ キコは うれしそう！' : 'せいかい！ キコは コオロギを もらった！') : `ざんねん… せいかいは ${KANA[q.answer]} だよ`);
   if ($('calc-toggle')) $('calc-toggle').onclick = () => toggleCalc('calc-slot');
   if (!show) return;
   $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; render(); scrollTo(0, 0); };
@@ -343,11 +345,14 @@ function quizFinish() {
   if (qz.mode === 'daily') { markStreakDay(); msg = `🔥 連続 ${streak()}日`; }
   save();
   quiz = null; page = 'finish';
-  main(`<div class="panel center"><h2>${modeLabel(qz.mode)}</h2><div class="score">${qz.correctCount}/${n}</div>
-    <div class="kiko-stage center-stage">${kikoImg(pass ? 'dance' : 'awake', 192, 'finish-kiko')}</div>
-    ${msg ? `<p><b>${msg}</b></p>` : ''}
-    <div class="button-row"><button class="button" id="quiz-home">ホーム</button><button class="button secondary" id="quiz-map">マップ</button></div></div>`);
+  const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
+    : qz.mode === 'stage' ? (pass ? (msg.includes('ひらいた') ? 'せつ クリア！ つぎの せつが ひらいた！' : 'せつ クリア！') : 'あと すこし！ 3もん せいかいで クリア')
+    : qz.mode === 'daily' ? `きょうの ぶん おわり！ れんぞく ${streak()}にち！` : 'ふくしゅう おわり！';
+  main(`<h2 class="center">${modeLabel(qz.mode)}</h2><div class="score dot center">${qz.correctCount}<i>/${n}</i></div>
+    <div class="rpg"><img class="pxi" id="finish-kiko" src="${KIKO.png.anim[pass ? 'dance' : 'awake'][0]}" alt=""><p id="rpg-msg"></p></div>
+    <div class="button-row"><button class="button" id="quiz-home">ホーム</button><button class="mini" id="quiz-map">マップ</button></div>`);
   animate('finish-kiko', pass ? 'dance' : 'awake', 300);
+  typeInto('rpg-msg', line);
   $('quiz-home').onclick = () => setPage('home');
   $('quiz-map').onclick = () => setPage('map');
 }
@@ -519,7 +524,7 @@ function drillView() {
   <div class="drill-types">${DRILLS.map(([id, t]) => `<button class="chip ${drill?.type === id ? 'on' : ''}" data-type="${id}">${esc(t)}</button>`).join('')}</div>
   ${drill ? `<div class="question-card"><h3>${esc(drill.stem)}</h3>
     <div class="choices">${drill.options.map((v, i) => `<button class="choice ${drill.done ? (i === drill.answer ? 'correct' : i === drill.picked ? 'wrong' : '') : ''}" data-opt="${i}" ${drill.done ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(v)}</button>`).join('')}</div>
-    ${drill.done ? `<div class="explain ${drill.picked === drill.answer ? '' : 'bad'}"><b>${drill.picked === drill.answer ? '✅ せいかい' : '💡 正解は ' + KANA[drill.answer]}</b><p class="pre">${esc(drill.explanation)}</p></div><button class="button full" id="again">次の問題 →</button>` : ''}
+    ${drill.done ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(drill.explanation)}</p></div><button class="button full" id="again">次の問題 →</button>` : ''}
   </div>` : '<p class="empty">分野を選んでね</p>'}
   <div class="button-row"><button class="button secondary" id="ntable">📊 正規分布表</button><button class="button secondary" id="calc-toggle">🧮 電卓</button></div>
   <div id="calc-slot"></div>`);
@@ -532,6 +537,7 @@ function drillView() {
     if (drill.picked === drill.answer) { state.drillCorrect++; state.drillCounter++; if (state.drillCounter % 2 === 0) state.crickets++; }
     markActive(); save(); render();
   });
+  if (drill.done) typeInto('rpg-msg', drill.picked === drill.answer ? 'せいかい！ キコは うれしそう！' : `ざんねん… せいかいは ${KANA[drill.answer]} だよ`);
   if ($('again')) $('again').onclick = () => { drill = makeDrill(drill.type); render(); };
 }
 
@@ -628,16 +634,17 @@ async function loadContent() {
 const DIAG = {};
 
 async function boot() {
+  const g = $('gkiko'); if (g && window.KIKO) { g.src = KIKO.png.walkRight[0]; KIKO.play(g, KIKO.png.walkRight, 220, 0); }
   $('modal-close').onclick = closeModal;
   $('modal-overlay').onclick = e => { if (e.target === $('modal-overlay')) closeModal(); };
-  document.querySelectorAll('.bottom-nav button').forEach(b => b.onclick = () => setPage(b.dataset.page));
+  document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setPage(b.dataset.page));
   $('sync-btn').onclick = () => setPage('settings');
   DATA = await loadContent();
   if (!DATA) {
     const hasTok = !!lsGet('kh-token');
     const diag = `<p class="muted">確認用：合言葉 ${hasTok ? 'あり' : 'なし'} ／ 鍵 ${DIAG.boot || '未取得'}${DIAG.decrypt ? ' ／ ' + esc(DIAG.decrypt) : ''}</p>`;
     const showLogin = () => { $('app').innerHTML = `<div class="panel"><h2>${hasTok ? '中身を開けませんでした' : 'ログインしてね'}</h2>${hasTok ? '<p class="muted">合言葉はあるが鍵を受け取れませんでした。もう一度ログインしてください</p>' : ''}${loginBox()}${diag}</div>`; bindLogin(); chrome(); };
-    document.querySelectorAll('.bottom-nav button').forEach(b => b.onclick = showLogin);
+    document.querySelectorAll('#tabs button').forEach(b => b.onclick = showLogin);
     $('sync-btn').onclick = showLogin;
     showLogin(); return;
   }
