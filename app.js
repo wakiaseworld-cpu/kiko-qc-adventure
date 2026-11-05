@@ -100,7 +100,7 @@ async function pushCloud() {
   } catch (_) { sync.status = 'offline'; }
   chrome();
 }
-const syncLabel = () => ({ synced: '☁ 同期中', nologin: '☁ ログイン', expired: '☁ 再ログイン', notready: '端末内保存', offline: 'オフライン', local: '端末内保存' }[sync.status]);
+const syncLabel = () => ({ synced: ic('cloud') + '同期中', nologin: ic('cloud') + 'ログイン', expired: ic('cloud') + '再ログイン', notready: '端末内保存', offline: 'オフライン', local: '端末内保存' }[sync.status]);
 
 // ---------- 学習の時期 ----------
 function phase() {
@@ -199,7 +199,8 @@ function main(html) {
 function chrome() {
   const g = $('brand-gecko');
   if (g && !g.children.length && window.KIKO) g.innerHTML = `<img class="pixel" src="${KIKO.png.tiny.mini}" alt="">`;
-  const l = $('sync-label'); if (l) l.textContent = syncLabel();
+  document.querySelectorAll('[data-ic]').forEach(el => { if (!el.children.length) el.innerHTML = ic(el.dataset.ic, 'tab'); });
+  const l = $('sync-label'); if (l) l.innerHTML = syncLabel();
 }
 function kikoImg(kind, width = 144, id = '') {
   const f = KIKO.png.anim[kind] || KIKO.png.anim.awake;
@@ -223,7 +224,7 @@ function home() {
     <div class="walker ${sleeping ? 'still' : ''}"><span class="kbub dot">${esc(bub)}</span><img class="pxi" id="home-kiko" src="${sleeping ? KIKO.png.tiny.sleep[0] : KIKO.png.walkRight[0]}" alt="キコちゃん"></div>
   </section>
   <section class="panel">
-    <div class="sh"><h2>キコちゃん Lv.${lv.level}</h2><span class="muted">🦗 ${state.crickets}匹</span></div>
+    <div class="sh"><h2>キコちゃん Lv.${lv.level}</h2><span class="muted">${ic('cricket')}${state.crickets}匹</span></div>
     <div class="progress"><div style="width:${Math.round((state.crickets - lv.base) / (lv.next - lv.base) * 100)}%"></div></div>
     <div class="stats">
       <div class="stat"><b class="dot">${plan.left >= 0 ? plan.left : '—'}</b><small>試験まで</small></div>
@@ -231,13 +232,13 @@ function home() {
       <div class="stat"><b class="dot">${state.cleared.length}<i>/36</i></b><small>節クリア</small></div>
     </div>
   </section>
-  <button class="button pop full" id="start-daily">${doneToday ? '✅ ' : ''}今日はこれだけ（10問）</button>
+  <button class="button pop full" id="start-daily">${doneToday ? ic('check') : ''}今日はこれだけ（10問）</button>
   <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
   <section class="panel strong">
     <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
-    <p>優先：<b>${chapterLabel(ph.chapters)}</b>${plan.notCleared && ph.n < 4 ? `<span class="muted"> ／ 目安 1日${plan.perDay}節</span>` : ''}</p>
+    <p>優先：<b class="nb">${chapterLabel(ph.chapters)}</b>${plan.notCleared && ph.n < 4 ? `<span class="muted nb"> ／ 目安 1日${plan.perDay}節</span>` : ''}</p>
   </section>
-  ${state.lastSection ? `<button class="mini full" id="resume">📖 つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
+  ${state.lastSection ? `<button class="mini full" id="resume">${ic('book')}つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
   const img = $('home-kiko');
   if (img) stopAnim = sleeping ? KIKO.play(img, KIKO.png.tiny.sleep, 440, 0) : KIKO.play(img, KIKO.png.walkRight, 220, 0);
   $('start-daily').onclick = () => startQuiz(dailyQuestions(), 'daily');
@@ -248,13 +249,13 @@ function home() {
 const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`);
 function map() {
   const ph = phase();
-  let html = '<h2>🗺️ マップ</h2>';
+  let html = '<h2>' + ic('map') + 'マップ</h2>';
   for (const ch of CHAPS) {
     const secs = SECS.filter(s => s.chapter === ch.id), done = secs.filter(s => has(state.cleared, s.id)).length;
     const pri = ph.chapters && ph.chapters.includes(ch.id);
-    html += `<div class="chapter ${pri ? 'priority' : ''}"><div class="chapter-header"><div class="chapter-num">${ch.id}</div><div style="flex:1"><h3>${esc(ch.title)}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ 🏆' : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}</div><div class="stage-list">`;
-    for (const s of secs) html += `<button class="stage" data-stage="${s.id}"><span>${s.number}. ${esc(s.title)}</span><span class="tag">${has(state.cleared, s.id) ? '✅' : unlockedSec(s) ? '▶' : '🔒'}</span></button>`;
-    html += `</div><button class="button gold full boss-btn" data-boss="${ch.id}" ${done !== secs.length ? 'disabled' : ''}>👑 ボス戦${has(state.boss, ch.id) ? '（再挑戦）' : ''}</button></div>`;
+    html += `<div class="chapter ${pri ? 'priority' : ''}"><div class="chapter-header"><div class="chapter-num">${ch.id}</div><div style="flex:1"><h3>${esc(ch.title)}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ ' + ic('trophy') : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}</div><div class="stage-list">`;
+    for (const s of secs) html += `<button class="stage" data-stage="${s.id}"><span>${s.number}. ${esc(s.title)}</span><span class="tag">${has(state.cleared, s.id) ? ic('check') : unlockedSec(s) ? ic('play') : ic('lock')}</span></button>`;
+    html += `</div><button class="button gold full boss-btn" data-boss="${ch.id}" ${done !== secs.length ? 'disabled' : ''}>${ic('crown')}ボス戦${has(state.boss, ch.id) ? '（再挑戦）' : ''}</button></div>`;
   }
   main(html);
   document.querySelectorAll('[data-stage]').forEach(b => b.onclick = () => openLesson(b.dataset.stage));
@@ -263,7 +264,7 @@ function map() {
 function openLesson(id, showText = false) {
   sectionId = id; state.lastSection = id; save();
   page = 'lesson'; quiz = null; render(); scrollTo(0, 0);
-  if (showText) { const el = $('full-text'); if (el) { el.hidden = false; $('toggle-text').textContent = '📖 閉じる'; } }
+  if (showText) { const el = $('full-text'); if (el) { el.hidden = false; $('toggle-text').innerHTML = ic('book') + '閉じる'; } }
 }
 
 // ---------- 節 ----------
@@ -273,17 +274,17 @@ function lesson() {
   const body = esc(s.text).replace(/^(解説|例題|練習問題|答えと解説)$/gm, '<b class="h">$1</b>');
   main(`<div class="reading">
     <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
-    <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">✅</span>' : ''}</div>
-    <div class="summary">${s.summary.map(t => `<p>🌱 ${esc(t)}</p>`).join('')}</div>
-    <div class="button-row"><button id="toggle-text" class="button secondary">📖 読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>✏️ 4問</button></div>
-    ${open ? '' : '<p class="note">🔒 前の節をクリアすると解けます</p>'}
+    <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">' + ic('check') + '</span>' : ''}</div>
+    <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(t)}</span></p>`).join('')}</div>
+    <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}4問</button></div>
+    ${open ? '' : '<p class="note">' + ic('lock') + '前の節をクリアすると解けます</p>'}
     <div id="full-text" class="lesson-text" hidden>${body}</div>
     <div class="button-row"><button id="prev-section" class="button secondary">← 前</button><button id="next-section" class="button secondary">次 →</button></div>
   </div>`);
   $('toggle-text').onclick = () => {
     const el = $('full-text'); el.hidden = !el.hidden;
     if (!el.hidden && !has(state.read, s.id)) { state.read.push(s.id); save(); }
-    $('toggle-text').textContent = el.hidden ? '📖 読む' : '📖 閉じる';
+    $('toggle-text').innerHTML = ic('book') + (el.hidden ? '読む' : '閉じる');
   };
   $('stage-quiz').onclick = () => startQuiz(s.questions.map(q => ({ ...q, section: s })), 'stage', s.id);
   const i = SECS.findIndex(a => a.id === s.id);
@@ -302,18 +303,18 @@ function startBoss(ch) {
   const pool = SECS.filter(s => s.chapter === ch).flatMap(s => s.questions.map(q => ({ ...q, section: s })));
   startQuiz(shuffle(pool).slice(0, 10), 'boss', ch);
 }
-const modeLabel = m => ({ boss: '👑 ボス戦', daily: '☀️ 今日はこれだけ', review: '🔁 復習', stage: '✏️ 節の問題' }[m]);
+const modeLabel = m => (ic({ boss: 'crown', daily: 'sun', review: 'loop', stage: 'pencil' }[m]) + { boss: 'ボス戦', daily: '今日はこれだけ', review: '復習', stage: '節の問題' }[m]);
 function quizView() {
   if (!quiz) return setPage('home');
   const q = quiz.questions[quiz.index]; if (!q) return quizFinish();
   const show = quiz.answered, ok = quiz.answer === q.answer, s = q.section;
   const choices = q.options.map((opt, i) => `<button class="choice ${show ? (i === q.answer ? 'correct' : i === quiz.answer ? 'wrong' : '') : ''}" data-answer="${i}" ${show ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(opt)}</button>`).join('');
-  main(`<div class="section-top"><div><div class="label">${modeLabel(quiz.mode)}</div><h2>${q.drill ? '🧮 計算' : esc(s.title)}</h2></div><span class="pill">${quiz.index + 1}/${quiz.questions.length}</span></div>
+  main(`<div class="section-top"><div><div class="label">${modeLabel(quiz.mode)}</div><h2>${q.drill ? ic('calc') + '計算' : esc(s.title)}</h2></div><span class="pill">${quiz.index + 1}/${quiz.questions.length}</span></div>
   <div class="progress"><div style="width:${quiz.index / quiz.questions.length * 100}%"></div></div>
   <div class="question-card"><h3>${esc(q.stem)}</h3>
-    ${q.drill ? '<button class="button secondary small" id="calc-toggle">🧮 電卓</button><div id="calc-slot"></div>' : ''}
+    ${q.drill ? '<button class="button secondary small" id="calc-toggle">' + ic('calc') + '電卓</button><div id="calc-slot"></div>' : ''}
     <div class="choices">${choices}</div>
-    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(q.explanation)}</p>${q.drill ? '' : `<button class="button secondary small" id="read-detail">📖 この節の解説</button>`}</div>
+    ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(q.explanation)}</p>${q.drill ? '' : `<button class="button secondary small" id="read-detail">${ic('book')}この節の解説</button>`}</div>
     <button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
   </div>`);
   document.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(+b.dataset.answer));
@@ -321,7 +322,7 @@ function quizView() {
   if ($('calc-toggle')) $('calc-toggle').onclick = () => toggleCalc('calc-slot');
   if (!show) return;
   $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; render(); scrollTo(0, 0); };
-  if ($('read-detail')) $('read-detail').onclick = () => modal(`📖 ${s.title}`, `<div class="summary">${s.summary.map(t => `<p>🌱 ${esc(t)}</p>`).join('')}</div><div class="lesson-text">${esc(s.text)}</div>`);
+  if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(t)}</span></p>`).join('')}</div><div class="lesson-text">${esc(s.text)}</div>`);
 }
 function answer(i) {
   if (quiz.answered) return;
@@ -335,14 +336,14 @@ function quizFinish() {
   const qz = quiz, n = qz.questions.length, score = Math.round(qz.correctCount / n * 100), pass = score >= 70;
   let msg = '';
   if (qz.mode === 'boss') {
-    if (pass && !has(state.boss, qz.section)) { state.boss.push(qz.section); state.boss.sort((a, b) => a - b); state.specialFood++; msg = '🏆 特別なエサをゲット！'; }
-    else msg = pass ? '🏆 クリア！' : '70%でクリア';
+    if (pass && !has(state.boss, qz.section)) { state.boss.push(qz.section); state.boss.sort((a, b) => a - b); state.specialFood++; msg = '特別なエサをゲット！'; }
+    else msg = pass ? 'クリア！' : '70%でクリア';
   }
   if (qz.mode === 'stage') {
-    if (pass && !has(state.cleared, qz.section)) { state.cleared.push(qz.section); msg = '✅ 節クリア！次の節がひらいたよ'; }
+    if (pass && !has(state.cleared, qz.section)) { state.cleared.push(qz.section); msg = '節クリア！次の節がひらいたよ'; }
     else if (!pass) msg = '3問正解でクリア';
   }
-  if (qz.mode === 'daily') { markStreakDay(); msg = `🔥 連続 ${streak()}日`; }
+  if (qz.mode === 'daily') { markStreakDay(); msg = `連続 ${streak()}日`; }
   save();
   quiz = null; page = 'finish';
   const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
@@ -360,10 +361,10 @@ function quizFinish() {
 // ---------- 復習 ----------
 function review() {
   const d = due(), all = Object.values(state.review), grad = all.filter(v => v.step >= 3).length, waiting = all.length - grad - d.length;
-  main(`<h2>🔁 復習ボックス</h2>
+  main(`<h2>${ic('loop')}復習ボックス</h2>
   <div class="stats"><div class="stat"><b>${d.length}</b><small>今日</small></div><div class="stat"><b>${waiting}</b><small>待機中</small></div><div class="stat"><b>${grad}</b><small>卒業</small></div></div>
   <p class="muted">翌日 → 3日後 → 7日後。3回続けて正解で卒業</p>
-  <button class="button full" id="start-review" ${d.length ? '' : 'disabled'}>▶ 復習する</button>
+  <button class="button full" id="start-review" ${d.length ? '' : 'disabled'}>${ic('play')}復習する</button>
   <div class="stage-list" style="margin-top:12px">${d.slice(0, 20).map(q => `<div class="stage"><span>${esc(q.section.title)}</span><span class="tag">${'●'.repeat(q.step)}${'○'.repeat(3 - q.step)}</span></div>`).join('') || '<p class="empty">今日の復習はありません</p>'}</div>`);
   $('start-review').onclick = () => startQuiz(capByChapter(d, 10), 'review');
 }
@@ -520,16 +521,16 @@ function drillAsQuestion(type) {
   return { ...makeDrill(t), id: 'drill', drill: true, section: { title: '計算', chapter: 0 } };
 }
 function drillView() {
-  main(`<h2>🧮 計算ドリル</h2>
+  main(`<h2>${ic('calc')}計算ドリル</h2>
   <div class="drill-types">${DRILLS.map(([id, t]) => `<button class="chip ${drill?.type === id ? 'on' : ''}" data-type="${id}">${esc(t)}</button>`).join('')}</div>
   ${drill ? `<div class="question-card"><h3>${esc(drill.stem)}</h3>
     <div class="choices">${drill.options.map((v, i) => `<button class="choice ${drill.done ? (i === drill.answer ? 'correct' : i === drill.picked ? 'wrong' : '') : ''}" data-opt="${i}" ${drill.done ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(v)}</button>`).join('')}</div>
     ${drill.done ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain"><p class="pre">${esc(drill.explanation)}</p></div><button class="button full" id="again">次の問題 →</button>` : ''}
   </div>` : '<p class="empty">分野を選んでね</p>'}
-  <div class="button-row"><button class="button secondary" id="ntable">📊 正規分布表</button><button class="button secondary" id="calc-toggle">🧮 電卓</button></div>
+  <div class="button-row"><button class="button secondary" id="ntable">${ic('bar')}正規分布表</button><button class="button secondary" id="calc-toggle">${ic('calc')}電卓</button></div>
   <div id="calc-slot"></div>`);
   document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { drill = makeDrill(b.dataset.type); render(); });
-  $('ntable').onclick = () => modal('📊 正規分布表', normalTable());
+  $('ntable').onclick = () => modal(ic('bar') + '正規分布表', normalTable());
   $('calc-toggle').onclick = () => toggleCalc('calc-slot');
   if (!drill) return;
   document.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => {
@@ -566,13 +567,13 @@ function toggleCalc(slotId) {
 }
 
 // ---------- おへや ----------
-const DECO = [['🚩', '品質の旗'], ['📚', 'データの本棚'], ['🛠️', '七つ道具'], ['🗂️', '新七つ道具'], ['🎲', '確率サイコロ'], ['📈', '管理図'], ['🏆', 'トロフィー'], ['🧩', '散布図クッション']];
+const DECO = [['flag', '品質の旗'], ['books', 'データの\u200b本棚'], ['tools', '七つ道具'], ['folder', '新\u200b七つ道具'], ['dice', '確率\u200bサイコロ'], ['line', '管理図'], ['trophy', 'トロフィー'], ['cushion', '散布図\u200bクッション']];
 function room() {
   const lv = level(), molts = Math.floor((lv.level - 1) / 3);
-  main(`<h2>🦎 おへや</h2>
-  <div class="room-scene"><div class="room-deco">${DECO.map(([e], i) => has(state.boss, i + 1) ? e : '').join(' ')}</div>${kikoImg('awake', 192, 'room-kiko')}<b>キコちゃん Lv.${lv.level}</b><div>🦗 ${state.crickets}匹 ／ ✨ 脱皮 ${molts}回 ／ 🍖 特別なエサ ${state.specialFood}</div></div>
-  <div class="panel"><div class="decor">${DECO.map(([e, n], i) => `<div class="tile ${has(state.boss, i + 1) ? '' : 'locked'}">${has(state.boss, i + 1) ? e : '❔'}<small>${esc(n)}</small></div>`).join('')}<div class="tile ${state.boss.length === 8 ? '' : 'locked'}">${state.boss.length === 8 ? '👑' : '❔'}<small>王冠</small></div></div></div>
-  <div class="button-row"><button class="button" id="kiko-dance">🎶 あそぶ</button>${state.specialFood ? '<button class="button secondary" id="kiko-food">🍖 エサをあげる</button>' : ''}</div>`);
+  main(`<h2>${ic('gecko')}おへや</h2>
+  <div class="room-scene"><div class="room-deco">${DECO.map(([e], i) => has(state.boss, i + 1) ? ic(e, 'big') : '').join('')}</div>${kikoImg('awake', 192, 'room-kiko')}<div class="room-info"><b>キコちゃん Lv.${lv.level}</b><div class="room-stats"><span>${ic('cricket')}${state.crickets}匹</span><span>${ic('sparkle')}脱皮 ${molts}回</span><span>${ic('meat')}特別なエサ ${state.specialFood}</span></div></div></div>
+  <div class="panel"><div class="decor">${DECO.map(([e, n], i) => `<div class="tile ${has(state.boss, i + 1) ? '' : 'locked'}">${ic(has(state.boss, i + 1) ? e : 'question', 'big')}<small>${esc(n)}</small></div>`).join('')}<div class="tile ${state.boss.length === 8 ? '' : 'locked'}">${ic(state.boss.length === 8 ? 'crown' : 'question', 'big')}<small>王冠</small></div></div></div>
+  <div class="button-row"><button class="button" id="kiko-dance">${ic('music')}あそぶ</button>${state.specialFood ? '<button class="button secondary" id="kiko-food">' + ic('meat') + 'エサをあげる</button>' : ''}</div>`);
   animate('room-kiko', 'awake', 400);
   $('kiko-dance').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'dance', 300, 3); };
   if ($('kiko-food')) $('kiko-food').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'food', 300, 1); };
@@ -581,15 +582,15 @@ function room() {
 // ---------- 設定 ----------
 function settings() {
   const st = { synced: 'キコハウスのアカウントで同期中', nologin: 'キコハウスでログインすると同期できます', expired: 'ログインが切れました', notready: '同期の準備中（いまは端末内に保存）', offline: 'オフライン（端末内に保存）', local: '端末内に保存' }[sync.status];
-  main(`<h2>⚙️ 設定</h2>
-  <div class="panel"><h3>📅 試験日</h3><input class="input" type="date" value="${esc(state.exam)}" id="exam-input"><button class="button full" id="exam-save" style="margin-top:10px">保存</button></div>
-  <div class="panel"><h3>☁️ 同期</h3><p>${st}</p>${sync.err && sync.status !== 'synced' ? `<p class="muted">${esc(sync.err)}</p>` : ''}
+  main(`<h2>${ic('gear')}設定</h2>
+  <div class="panel"><h3>${ic('calendar')}試験日</h3><input class="input" type="date" value="${esc(state.exam)}" id="exam-input"><button class="button full" id="exam-save" style="margin-top:10px">保存</button></div>
+  <div class="panel"><h3>${ic('cloud')}同期</h3><p>${st}</p>${sync.err && sync.status !== 'synced' ? `<p class="muted">${esc(sync.err)}</p>` : ''}
     ${['nologin', 'expired'].includes(sync.status) ? loginBox() : `<div class="button-row"><button class="button secondary" id="sync-now">今すぐ同期</button><button class="button secondary" id="copy-token">合言葉をコピー</button></div>`}</div>
-  <div class="panel"><h3>📊 記録</h3>
+  <div class="panel"><h3>${ic('bar')}記録</h3>
     <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/8</p>
     <p>解いた問題 ${Object.keys(state.history).length}/144 ／ 計算 ${state.drillCorrect}問</p>
     <p>勉強した日 ${state.active.length}日 ／ 最高連続 ${state.bestStreak}日</p></div>
-  <div class="panel"><h3>💾 バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
+  <div class="panel"><h3>${ic('disk')}バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
   $('exam-save').onclick = () => { const v = $('exam-input').value; if (!v) return; state.exam = v; save(); modal('保存しました', `試験日：${esc(slash(v))}<br>残り ${dayDelta(v, today())}日`); };
   bindLogin();
   if ($('copy-token')) $('copy-token').onclick = async () => { try { await navigator.clipboard.writeText(lsGet('kh-token') || ''); modal('コピーしました', 'ホーム画面のアプリの「合言葉」に貼ってください'); } catch (_) { modal('コピーできませんでした', ''); } };
@@ -609,7 +610,7 @@ const loginBox = () => `<a class="button full" href="${KH_LOGIN_PAGE}" >1. Googl
 function bindLogin() { const f = $('code-form'); if (!f) return; f.onsubmit = e => { e.preventDefault(); const v = $('code-in').value.trim(); if (!v) return; lsSet('kh-token', v); lsSet('qc-key', null); location.reload(); }; }
 
 // ---------- 共通 ----------
-function modal(title, html) { $('modal-title').textContent = title; $('modal-content').innerHTML = html; $('modal-overlay').classList.remove('hidden'); }
+function modal(title, html) { $('modal-title').innerHTML = title; $('modal-content').innerHTML = html; $('modal-overlay').classList.remove('hidden'); }
 function closeModal() { $('modal-overlay').classList.add('hidden'); }
 function render() {
   ({ home, map, lesson, quiz: quizView, review, drill: drillView, room, settings }[page] || (() => {}))();
