@@ -268,10 +268,27 @@ function openLesson(id, showText = false) {
 }
 
 // ---------- 節 ----------
+function fmtText(raw) {
+  const w = l => [...l].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 0.5 : 1), 0);
+  const out = [];
+  for (let l of raw.replace(/​/g, '').split('\n')) {
+    l = l.replace(/^●\s+/, '● ');
+    const prev = out[out.length - 1];
+    if (prev && prev.trim() && l.trim() && !/^\s*●/.test(l) && !/^(解説|例題|練習問題|答えと解説)$/.test(prev) &&
+      (/^\s{2,}/.test(l) || (w(prev) >= 39 && !/[。：]$/.test(prev) && !/^(答え|例題|解説|練習問題|問\d|\(\d|（\d)/.test(l)))) {
+      out[out.length - 1] = prev + l.trim();
+    } else out.push(l);
+  }
+  const NG = /^(何|それぞれ何|これ|それ|この|こう|そう)$/;
+  return out.join('\n')
+    .replace(/^● ([^：\n]{1,30})：/gm, '● <b class="kw">$1</b>：')
+    .replace(/「([^「」\n]{2,20})」(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, '「<b class="kw">$1</b>」')
+    .replace(/([^\s、。をはがにでも「」：>]{2,20}?)(?=と(も)?(いいます|いい、|呼ばれ|呼びます|呼ぶ))/g, (m, t) => NG.test(t) || /^[）)れ]/.test(t) || /→|ほしい|する$|書く/.test(t) || (t.split('（').length !== t.split('）').length) || t.includes('<') ? m : `<b class="kw">${t}</b>`);
+}
 function lesson() {
   const s = secBy(sectionId); if (!s) return setPage('map');
   const open = unlockedSec(s);
-  const body = esc(s.text).replace(/^(解説|例題|練習問題|答えと解説)$/gm, '<b class="h">$1</b>');
+  const body = fmtText(esc(s.text)).replace(/^(解説|例題|練習問題|答えと解説)$/gm, '<b class="h">$1</b>');
   main(`<div class="reading">
     <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
     <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">' + ic('check') + '</span>' : ''}</div>
@@ -322,7 +339,7 @@ function quizView() {
   if ($('calc-toggle')) $('calc-toggle').onclick = () => toggleCalc('calc-slot');
   if (!show) return;
   $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; render(); scrollTo(0, 0); };
-  if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(t)}</span></p>`).join('')}</div><div class="lesson-text">${esc(s.text)}</div>`);
+  if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(t)}</span></p>`).join('')}</div><div class="lesson-text">${fmtText(esc(s.text))}</div>`);
 }
 function answer(i) {
   if (quiz.answered) return;

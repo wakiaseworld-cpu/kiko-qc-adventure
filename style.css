@@ -1,7 +1,7 @@
 /* キコハウスに合わせた見た目 */
 :root{
   --bg:#d6e9cf;--surface:#fff;--soft:#f4f6fa;--fg:#1b2433;--muted:#5f6b7e;--line:#d5dbe5;--outline:#2a201c;
-  --ink:#1f3a5f;--ink-fg:#fff;--stamp:#d2453f;--good:#2e7d4f;--good-bg:#e5f3ea;--bad:#b3403a;--bad-bg:#fbe9e7;
+  --ink:#1f3a5f;--ink-fg:#fff;--stamp:#d2453f;--good:#2e7d4f;--good-bg:#e5f3ea;--mark:#f9e08b;--bad:#b3403a;--bad-bg:#fbe9e7;
   --sun:#fff3c9;--rpg:#3f6e51;--rpg-fg:#f6ead2;--sand:#e3cfa0;--sand2:#d2b97f;--spot:rgba(110,64,52,.08);--pop:#e8546a;
   --night:#5f7f66;--night-fg:#f3f7ee;
   --dot:"DotGothic16","Zen Kaku Gothic New",monospace;
@@ -10,7 +10,7 @@
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#1c2a21;--surface:#18202b;--soft:#1d2633;--fg:#e6ebf2;--muted:#98a3b5;--line:#2c3747;--outline:#0c0a09;
-  --ink:#9cc0ee;--ink-fg:#0f1620;--stamp:#ff8f86;--good:#7fd19c;--good-bg:#1a3326;--bad:#f08a80;--bad-bg:#3a1f1d;
+  --ink:#9cc0ee;--ink-fg:#0f1620;--stamp:#ff8f86;--good:#7fd19c;--good-bg:#1a3326;--mark:rgba(242,201,76,.38);--bad:#f08a80;--bad-bg:#3a1f1d;
   --sun:#3a3115;--rpg:#2c5139;--sand:#5a4a30;--sand2:#4a3c26;--spot:rgba(244,231,234,.05);--night:#13201a;--night-fg:#e6efe2;color-scheme:dark}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:15px;line-height:1.7;font-variant-numeric:tabular-nums;-webkit-tap-highlight-color:transparent}
@@ -169,3 +169,4 @@ body{line-break:strict;text-wrap:pretty}
 h1,h2,h3,button,.pill,.tag,.label,.tile small,.kbub,.room-stats span,.muted{word-break:keep-all;overflow-wrap:anywhere}
 p,li,.choice,.explain{word-break:auto-phrase}
 .nb{white-space:nowrap}
+.kw{font-weight:700;color:var(--fg);background:linear-gradient(transparent 58%,var(--mark) 58%);padding:0 1px}
