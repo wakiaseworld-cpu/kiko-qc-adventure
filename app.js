@@ -410,6 +410,7 @@ function openLesson(id, showText = false) {
 }
 
 // ---------- 節 ----------
+const tatoeHtml = s => s.tatoe ? `<div class="tatoe"><b class="tatoe-h">${ic('sparkle')}たとえば</b><p>${esc(tight(s.tatoe))}</p></div>` : '';
 function fmtText(raw, inline) {
   const w = l => [...l].reduce((a, c) => a + (c.charCodeAt(0) < 256 ? 0.5 : 1), 0);
   const HEAD = /^(解説|例題|練習問題|答えと解説)$/;
@@ -431,7 +432,7 @@ function fmtText(raw, inline) {
   function kwTerm(m, t) { return NG.test(t) || t.length < 2 || /^[）)れ]/.test(t) || /→|ほしい|する$|書く/.test(t) || (t.split('（').length !== t.split('）').length) || t.includes('<') ? m : `<b class="kw">${t}</b>`; }
   if (inline) return raw.replace(/\u200b/g, '').split(/\n\s*\n/).map(b => kw(b.split('\n').map(x => x.trim()).join(''))).filter(Boolean).join('<br>');
   return out.map(l => {
-    const t = l.trim(); if (!t) return '';
+    const t = l.trim(); if (!t || /^たとえば[：:]/.test(t)) return ''; // たとえばは上の欄に出す
     if (HEAD.test(t)) return `<h4 class="tab"><span>${t}</span></h4>`;
     let m = t.match(/^● ([^：]{1,30})：(.*)$/);
     if (m) return `<div class="pt"><b class="pt-h">${m[1]}</b><p>${kw(m[2])}</p></div>`;
@@ -449,7 +450,7 @@ function lesson() {
   main(`<div class="reading">
     <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
     <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">' + ic('check') + '</span>' : ''}</div>
-    <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>
+    <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>${tatoeHtml(s)}
     <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}4問</button></div>
     ${open ? '' : '<p class="note">' + ic('lock') + '前の節をクリアすると解けます</p>'}
     <div id="full-text" class="lesson-text" hidden>${body}</div>
@@ -510,7 +511,7 @@ function quizView() {
   if ($('calc-toggle')) $('calc-toggle').onclick = () => toggleCalc('calc-slot');
   if (!show) return;
   $('next-q').onclick = () => { quiz.index++; quiz.answered = false; quiz.answer = null; render(); scrollTo(0, 0); };
-  if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div><div class="lesson-text">${fmtText(esc(s.text))}</div>`);
+  if ($('read-detail')) $('read-detail').onclick = () => modal(`${ic('book')}${esc(s.title)}`, `<div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>${tatoeHtml(s)}<div class="lesson-text">${fmtText(esc(s.text))}</div>`);
 }
 function exampleView(q) {
   const show = quiz.answered, ok = quiz.answer === 0, s = q.section;
