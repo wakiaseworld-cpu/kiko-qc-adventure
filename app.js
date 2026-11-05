@@ -4,7 +4,7 @@
 
 // ---------- 設定 ----------
 const KH_API = 'https://script.google.com/macros/s/AKfycbyNjses9QwU8f575Ua9wLQ-Io2WirPL1S7JeZxGMR5IBaDmWynmoPgIwM6bN5ZLl5Fp8g/exec';
-const KH_LOGIN_PAGE = 'https://script.google.com/macros/s/AKfycbwGFSEDqGuH_FKt_GU6cnn_cy3TdvQwr2Kin4J1wGF1c0FYyZk1-yV2L_78apqwod-t-w/exec?link=1';
+const KH_LOGIN_PAGE = 'https://script.google.com/macros/s/AKfycbwGFSEDqGuH_FKt_GU6cnn_cy3TdvQwr2Kin4J1wGF1c0FYyZk1-yV2L_78apqwod-t-w/exec?link=1&back=qc';
 const STORE = 'kiko-qc-v1';
 const DEFAULT_EXAM = '2026-12-19';
 const CALC_CHAPTERS = [2, 5, 6, 7, 8];
@@ -597,7 +597,7 @@ function settings() {
   };
 }
 
-const loginBox = () => `<a class="button full" href="${KH_LOGIN_PAGE}" target="_blank" rel="noopener">1. Googleでログイン</a>
+const loginBox = () => `<a class="button full" href="${KH_LOGIN_PAGE}" >1. Googleでログイン</a>
   <p class="muted">出てきた英数字の合言葉をコピーして、下に貼る</p>
   <form id="code-form" class="code-form"><input class="input" id="code-in" placeholder="合言葉" autocomplete="off" autocapitalize="off"><button class="button">2. 入れる</button></form>`;
 function bindLogin() { const f = $('code-form'); if (!f) return; f.onsubmit = e => { e.preventDefault(); const v = $('code-in').value.trim(); if (!v) return; lsSet('kh-token', v); lsSet('qc-key', null); location.reload(); }; }
