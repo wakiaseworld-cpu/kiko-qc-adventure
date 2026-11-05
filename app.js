@@ -578,7 +578,7 @@ function settings() {
   main(`<h2>⚙️ 設定</h2>
   <div class="panel"><h3>📅 試験日</h3><input class="input" type="date" value="${esc(state.exam)}" id="exam-input"><button class="button full" id="exam-save" style="margin-top:10px">保存</button></div>
   <div class="panel"><h3>☁️ 同期</h3><p>${st}</p>
-    ${['nologin', 'expired'].includes(sync.status) ? loginBox() : `<button class="button secondary full" id="sync-now">今すぐ同期</button>`}</div>
+    ${['nologin', 'expired'].includes(sync.status) ? loginBox() : `<div class="button-row"><button class="button secondary" id="sync-now">今すぐ同期</button><button class="button secondary" id="copy-token">合言葉をコピー</button></div>`}</div>
   <div class="panel"><h3>📊 記録</h3>
     <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/8</p>
     <p>解いた問題 ${Object.keys(state.history).length}/144 ／ 計算 ${state.drillCorrect}問</p>
@@ -586,6 +586,7 @@ function settings() {
   <div class="panel"><h3>💾 バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
   $('exam-save').onclick = () => { const v = $('exam-input').value; if (!v) return; state.exam = v; save(); modal('保存しました', `試験日：${esc(slash(v))}<br>残り ${dayDelta(v, today())}日`); };
   bindLogin();
+  if ($('copy-token')) $('copy-token').onclick = async () => { try { await navigator.clipboard.writeText(lsGet('kh-token') || ''); modal('コピーしました', 'ホーム画面のアプリの「合言葉」に貼ってください'); } catch (_) { modal('コピーできませんでした', ''); } };
   if ($('sync-now')) $('sync-now').onclick = async () => { await pullCloud(); render(); };
   $('backup-export').onclick = () => { const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `kiko-qc-${today()}.json`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000); };
   $('backup-import').onclick = () => $('backup-file').click();
