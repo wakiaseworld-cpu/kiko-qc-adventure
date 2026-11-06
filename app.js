@@ -394,6 +394,7 @@ function home() {
   <div class="duo"><button class="button big" id="start-text">${ic('book')}テキストを読む<small>${esc(nextSec ? nextSec.number + '. ' + nextSec.title : '')}</small></button><button class="button pop big" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ic('pencil')}今日はこれだけ<small>10問</small></button></div>
   <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
   <button class="mini full" id="start-custom">${ic('pencil')}章と問題数をえらんで解く</button>
+  <a class="mini full" id="open-sp" href="https://app.studyplus.jp/" target="_blank" rel="noopener">${ic('books')}Studyplus をひらく</a>
   <section class="panel strong">
     <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
     <p>優先：<b class="nb">${chapterLabel(ph.chapters)}</b>${plan.notCleared && ph.n < 4 ? `<span class="muted nb"> ／ 目安 1日${plan.perDay}節</span>` : ''}</p>
