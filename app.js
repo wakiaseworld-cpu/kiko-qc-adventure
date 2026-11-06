@@ -95,8 +95,13 @@ function mergeState(a, b) {
   for (const [d, n] of Object.entries(b.dayCount || {})) m.dayCount[d] = Math.max(m.dayCount[d] || 0, n);
   m.bestStreak = Math.max(a.bestStreak || 0, b.bestStreak || 0);
   // カードの「覚えた」は最後に押したほうを使う
-  m.cards = { ...(a.cards || {}) };
-  for (const [k, v] of Object.entries(b.cards || {})) if (!m.cards[k] || (v.at || 0) > (m.cards[k].at || 0)) m.cards[k] = v;
+  // 「まだ」の回数は端末ごとに持って足し合わせる（by）
+  m.cards = {};
+  for (const k of new Set([...Object.keys(a.cards || {}), ...Object.keys(b.cards || {})])) {
+    const x = (a.cards || {})[k], y = (b.cards || {})[k], t = !x ? y : !y ? x : (y.at || 0) > (x.at || 0) ? y : x, by = {};
+    for (const c of [x, y]) if (c) for (const [d, n] of Object.entries(c.by || (c.miss ? { base: c.miss } : {}))) by[d] = Math.max(by[d] || 0, n);
+    m.cards[k] = { ok: !!t.ok, at: t.at || 0, by };
+  }
   // コオロギなどの数は端末ごとに持ち、合計を出す（2台で別々に進めても足し合わせになる）
   m.cnt = {};
   for (const src of [a, b]) for (const [dev, c] of Object.entries(src.cnt || {})) { const t = m.cnt[dev] || (m.cnt[dev] = {}); for (const k of COUNTERS) t[k] = Math.max(t[k] || 0, c[k] || 0); }
@@ -844,7 +849,7 @@ function room() {
   <div class="panel"><div class="decor">${DECO.map(([e, n], i) => `<div class="tile ${chBossDone(i + 1) ? '' : 'locked'}">${ic(chBossDone(i + 1) ? e : 'question', 'big')}<small>${esc(n)}</small></div>`).join('')}<div class="tile ${state.boss.length === STAGE_IDS.length ? '' : 'locked'}">${ic(state.boss.length === STAGE_IDS.length ? 'crown' : 'question', 'big')}<small>王冠</small></div></div></div>
   <div class="button-row"><button class="button" id="kiko-dance">${ic('music')}あそぶ</button>${foodLeft() ? '<button class="button secondary" id="kiko-food">' + ic('meat') + 'エサをあげる<small>コオロギ' + FOOD_VALUE + '匹分</small></button>' : ''}</div>
   <p class="muted center">次のLv.まで あと${lv.next - state.crickets}匹 ／ 次の脱皮まで あと${3 - (lv.level - 1) % 3}レベル</p>
-  <p class="muted center">コオロギ：正解1問で1匹、復習で卒業すると3匹 ／ 特別なエサ：ボスに初めて勝つと1こ（コオロギ${FOOD_VALUE}匹分）</p>`);
+  <p class="muted center">コオロギ：正解1問で1匹（同じ問題は1日1回まで）、復習で卒業すると3匹（1問につき1回だけ） ／ 特別なエサ：ボスに初めて勝つと1こ（コオロギ${FOOD_VALUE}匹分）</p>`);
   animate('room-kiko', 'awake', 400);
   $('kiko-dance').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'dance', 300, 3); };
   if ($('kiko-food')) $('kiko-food').onclick = () => {
@@ -902,16 +907,17 @@ function qCard(q, no) {
 
 // ----- 実力メーター：いま解ける問題の割合（最後に解いたとき正解で、復習ボックスで待っていない問題を「解ける」とする） -----
 function skill() {
-  const r = { all: [0, 0], met: [0, 0], pra: [0, 0], ch: {} };
+  const r = { all: [0, 0], met: [0, 0], pra: [0, 0], ch: {}, kind: { got: 0, rev: 0, new: 0 } };
   for (const c of CHAPS) r.ch[c.id] = [0, 0];
   for (const s of SECS) for (const q of s.questions) {
     const h = state.history[q.id], rv = state.review[q.id];
-    const ok = h && (h.ok !== undefined ? h.ok : h.correct > 0) && !(rv && rv.step < 3) ? 1 : 0;
+    const inRev = rv && rv.step < 3, ok = h && (h.ok !== undefined ? h.ok : h.correct > 0) && !inRev ? 1 : 0;
     for (const t of [r.all, s.chapter === 1 ? r.pra : r.met, r.ch[s.chapter]]) { t[0] += ok; t[1]++; }
+    r.kind[ok ? 'got' : inRev ? 'rev' : h ? 'rev' : 'new']++;
   }
   const need = (v, p) => Math.max(0, Math.ceil(v[1] * p / 100) - v[0]);
   const n = [['総合', need(r.all, 70)], ['手法', need(r.met, 50)], ['実践', need(r.pra, 50)]].filter(x => x[1]);
-  r.msg = n.length ? '合格ラインまで ' + n.map(([k, v]) => `${k}あと${v}問`).join('・') : '合格ラインを超えています！';
+  r.msg = n.length ? '目安まで ' + n.map(([k, v]) => `${k}あと${v}問`).join('・') : '目安の線を全部こえています！';
   return r;
 }
 
@@ -925,12 +931,14 @@ function finishHub() {
     <p class="muted">${esc(cs.chs.length ? cs.chs.map(c => chTitle(c)).join('・') : '全部の章')}（${pool.length}問）</p>
     <p class="muted">問題数</p><div class="seg">${[10, 20, 30, 50].map(n => `<button class="${cs.n === n ? 'on' : ''}" data-cn="${n}">${n}</button>`).join('')}</div>
     <p class="muted">出し方</p><div class="seg"><button class="${cs.order === 'weak' ? 'on' : ''}" data-cord="weak">苦手から</button><button class="${cs.order === 'random' ? 'on' : ''}" data-cord="random">ランダム</button></div>
-    <p class="muted">${cs.order === 'weak' ? '前にまちがえた問題 → 復習ボックスの問題 → まだ解いていない問題 → 正解した問題 の順' : '選んだ章からランダム'}</p>
+    <p class="muted">${cs.order === 'weak' ? '今日が復習日の問題 → まだ解いていない問題 → 正解した問題 → 復習日がまだ先の問題 の順' : '選んだ章からランダム'}</p>
     <button class="button full" id="custom-go" ${pool.length ? '' : 'disabled'}>${ic('play')}${Math.min(cs.n, pool.length)}問 解く</button>
   </div>
   <div class="panel"><h3>${ic('bar')}実力メーター</h3><p class="muted">いま解ける問題の割合。最後に解いたとき正解で、復習ボックスにも入っていない問題を「解ける」に数えます（まだ解いていない問題は「解けない」）</p>
-    ${meter('総合（70%）', sk.all[0], sk.all[1], 70)}${meter('手法（50%）', sk.met[0], sk.met[1], 50)}${meter('実践（50%）', sk.pra[0], sk.pra[1], 50)}
+    <div class="stats"><div class="stat"><b>${sk.kind.got}</b><small>習得済み</small></div><div class="stat"><b>${sk.kind.rev}</b><small>復習中</small></div><div class="stat"><b>${sk.kind.new}</b><small>まだ解いてない</small></div></div>
+    ${meter('総合（目安70%）', sk.all[0], sk.all[1], 70)}${meter('手法（目安50%）', sk.met[0], sk.met[1], 50)}${meter('実践（目安50%）', sk.pra[0], sk.pra[1], 50)}
     <p><b>${esc(sk.msg)}</b></p>
+    <p class="muted">線は本番の合格基準と同じ数字ですが、このアプリの問題をどれだけ覚えたかの目安で、本番の点数の予想ではありません</p>
     <details class="chd"><summary>章ごとに見る</summary>${CHAPS.map(c => { const v = sk.ch[c.id]; return `<div class="chrow"><span>第${c.id}章 ${esc(c.title)}</span><span class="muted">${v[0]}/${v[1]}</span><b>${pctS(v)}</b></div>`; }).join('')}</details>
   </div>
   <div class="panel"><h3>${ic('books')}答えと解説の一覧</h3><select class="input" id="ql-sel">${SECS.map(s => `<option value="${s.id}" ${s.id === (sectionId || state.lastSection) ? 'selected' : ''}>${s.chapter}-${s.number} ${esc(s.title)}</option>`).join('')}</select><button class="button secondary full" id="ql-go" style="margin-top:8px">開く</button></div>
@@ -951,7 +959,8 @@ function customSet() {
 function customPool(cs, ordered) {
   const list = SECS.filter(s => !cs.chs.length || cs.chs.includes(s.chapter)).flatMap(s => s.questions.map(q => ({ ...q, section: s })));
   if (!ordered) return list;
-  const rank = q => { const h = state.history[q.id], rv = state.review[q.id]; if (!h) return 2; if (h.ok === false || (h.ok === undefined && !h.correct)) return 0; if (rv && rv.step < 3) return 1; return 3; };
+  // 今日が復習日の問題 → まだ解いていない問題 → 正解した問題 → 復習日がまだ先の問題（間隔をあける復習とぶつけない）
+  const rank = q => { const h = state.history[q.id], rv = state.review[q.id]; if (rv && rv.step < 3) return rv.due && rv.due <= today() ? 0 : 3; if (!h) return 1; return 2; };
   const mixed = shuffle(list);
   return cs.order === 'weak' ? mixed.sort((a, b) => rank(a) - rank(b)) : mixed;
 }
@@ -1012,11 +1021,14 @@ function termCards() {
   return (termCards.c = out);
 }
 const cardOk = list => list.filter(c => state.cards?.[c.id]?.ok).length;
+const missOf = id => { const c = state.cards?.[id]; if (!c) return 0; return c.by ? Object.values(c.by).reduce((a, n) => a + n, 0) : c.miss || 0; };
 let deck = null;
 function openCards(kind) {
   const all = kind === 'f' ? formulaCards() : termCards(), notOk = all.filter(c => !state.cards?.[c.id]?.ok);
-  const miss = c => state.cards?.[c.id]?.miss || 0; // 「まだ」を押した回数が多いカードから出す
-  deck = { kind, list: shuffle(notOk.length ? notOk : all).sort((a, b) => miss(b) - miss(a)), i: 0, flip: false, all: all.length, again: !notOk.length };
+  // 「まだ」の回数が多いカードと、まだ一度も見ていないカードを交互に出す（途中でやめても新しいカードに届く）
+  const pool = shuffle(notOk.length ? notOk : all), missed = pool.filter(c => missOf(c.id)).sort((a, b) => missOf(b.id) - missOf(a.id)), fresh = pool.filter(c => !missOf(c.id)), list = [];
+  while (missed.length || fresh.length) { if (missed.length) list.push(missed.shift()); if (fresh.length) list.push(fresh.shift()); }
+  deck = { kind, list, i: 0, flip: false, all: all.length, again: !notOk.length };
   page = 'cards'; pushNav(); scrollTo(0, 0); render();
 }
 function cardsView() {
@@ -1028,10 +1040,10 @@ function cardsView() {
   }
   main(`<div class="section-top"><h2>${ic('cards')}${name}カード</h2><span class="pill">${deck.i + 1}/${deck.list.length}</span></div>
   <p class="muted">覚えた ${okN}/${deck.all}　${deck.again ? '全部覚えたので、全部から出しています' : 'まだのカードだけ出しています'}</p>
-  <button class="flash ${deck.flip ? 'flip' : ''}" id="cd-card">${state.cards?.[c.id]?.miss ? `<small class="miss-n">${ic('loop')}まだ ${state.cards[c.id].miss}回</small>` : ''}<span class="flash-f">${esc(c.front)}</span>${deck.flip ? `<span class="flash-b">${esc(c.back)}</span>${c.note ? `<small>${esc(c.note)}</small>` : ''}${c.src ? `<small>${c.src.chapter}-${c.src.number} ${esc(c.src.title)}</small>` : ''}` : `<small>タップで${deck.kind === 'f' ? '式' : '説明'}を見る</small>`}</button>
+  <button class="flash ${deck.flip ? 'flip' : ''}" id="cd-card">${missOf(c.id) ? `<small class="miss-n">${ic('loop')}まだ ${missOf(c.id)}回</small>` : ''}<span class="flash-f">${esc(c.front)}</span>${deck.flip ? `<span class="flash-b">${esc(c.back)}</span>${c.note ? `<small>${esc(c.note)}</small>` : ''}${c.src ? `<small>${c.src.chapter}-${c.src.number} ${esc(c.src.title)}</small>` : ''}` : `<small>タップで${deck.kind === 'f' ? '式' : '説明'}を見る</small>`}</button>
   ${deck.flip ? `<div class="button-row"><button class="button secondary" data-know="0">${ic('loop')}まだ</button><button class="button" data-know="1">${ic('check')}覚えた</button></div>` : ''}`);
   $('cd-card').onclick = () => { deck.flip = !deck.flip; render(); };
-  document.querySelectorAll('[data-know]').forEach(b => b.onclick = () => { state.cards = state.cards || {}; const ok = b.dataset.know === '1', pm = state.cards[c.id]?.miss || 0; state.cards[c.id] = { ok, at: Date.now(), miss: pm + (ok ? 0 : 1) }; save(); deck.i++; deck.flip = false; render(); scrollTo(0, 0); });
+  document.querySelectorAll('[data-know]').forEach(b => b.onclick = () => { state.cards = state.cards || {}; const ok = b.dataset.know === '1', old = state.cards[c.id], by = { ...(old?.by || (old?.miss ? { base: old.miss } : {})) }; if (!ok) by[DEV] = (by[DEV] || 0) + 1; state.cards[c.id] = { ok, at: Date.now(), by }; save(); deck.i++; deck.flip = false; render(); scrollTo(0, 0); });
 }
 
 // ---------- 共通 ----------
