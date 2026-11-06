@@ -37,12 +37,14 @@ const initial = () => ({
   crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {}, gradAwarded: {},
   days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, cards: {}, updatedAt: 0
 });
-const COUNTERS = ['crickets', 'specialFood', 'drillCorrect', 'drillCounter'];
+const FOOD_VALUE = 10; // 特別なエサ1つ＝コオロギ10匹分
+const foodLeft = () => Math.max(0, (state.specialFood || 0) - (state.fed || 0));
+const COUNTERS = ['crickets', 'specialFood', 'drillCorrect', 'drillCounter', 'fed'];
 const DEV = (() => { let d = lsGet('kiko-qc-dev'); if (!d) { d = Math.random().toString(36).slice(2, 10); lsSet('kiko-qc-dev', d); } return d; })();
 // 問題ごとのごほうび（同じ問題・同じ日は1回、卒業は1回）は記録の数から出すので、2台で解いても二重にならない
 function totals(st) {
   for (const k of COUNTERS) st[k] = Object.values(st.cnt || {}).reduce((a, c) => a + (c[k] || 0), 0);
-  st.crickets += Object.keys(st.practiceAwarded || {}).length + 3 * Object.keys(st.gradAwarded || {}).length;
+  st.crickets += Object.keys(st.practiceAwarded || {}).length + 3 * Object.keys(st.gradAwarded || {}).length + FOOD_VALUE * (st.fed || 0);
   return st;
 }
 const histBy = h => h ? (h.by ? h : { ...h, by: { base: { a: h.attempts || 0, c: h.correct || 0 } } }) : null;
@@ -377,6 +379,7 @@ function home() {
   <section class="panel">
     <div class="sh"><h2>キコちゃん Lv.${lv.level}</h2><span class="muted">${ic('cricket')}${state.crickets}匹</span></div>
     <div class="progress"><div style="width:${Math.round((state.crickets - lv.base) / (lv.next - lv.base) * 100)}%"></div></div>
+    <p class="muted lvnote">次のLv.まで あと${lv.next - state.crickets}匹 ／ 次の脱皮まで あと${3 - (lv.level - 1) % 3}レベル${foodLeft() ? ` ／ ${ic('meat')}エサ ${foodLeft()}こ（おへやで あげられます）` : ''}</p>
     <div class="stats">
       <div class="stat"><b class="dot">${plan.left >= 0 ? plan.left : '—'}</b><small>試験まで</small></div>
       <div class="stat"><b class="dot">${streak()}</b><small>連続</small></div>
@@ -408,7 +411,7 @@ function nextStudySec() {
 const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`);
 function map() {
   const ph = phase();
-  let html = '<h2>' + ic('map') + 'マップ</h2><p class="muted imp-note">' + ic('star') + '＝出題の目安（3つが一番よく出る）。ネットの無料講座が公式の出題範囲表をもとに付けた目安で、実際の出題数ではありません</p>';
+  let html = '<h2>' + ic('map') + 'マップ</h2><p class="muted imp-note">' + ic('star') + '＝本の「でる度」（3つが一番よく出る）。本の目安で、実際の出題数を約束するものではありません</p>';
   const cur = secBy(state.lastSection), curSt = cur ? stageOf(cur).id : STAGE_IDS[0];
   for (const st of STAGES) {
     const ch = { id: st.id }, secs = st.secs, done = secs.filter(s => has(state.cleared, s.id)).length;
@@ -837,12 +840,20 @@ const DECO = [['flag', '品質の旗'], ['books', 'データの\u200b本棚'], [
 function room() {
   const lv = level(), molts = Math.floor((lv.level - 1) / 3);
   main(`<h2>${ic('gecko')}おへや</h2>
-  <div class="room-scene"><div class="room-deco">${DECO.map(([e], i) => chBossDone(i + 1) ? ic(e, 'big') : '').join('')}</div>${kikoImg('awake', 192, 'room-kiko')}<div class="room-info"><b>キコちゃん Lv.${lv.level}</b><div class="room-stats"><span>${ic('cricket')}${state.crickets}匹</span><span>${ic('sparkle')}脱皮 ${molts}回</span><span>${ic('meat')}特別なエサ ${state.specialFood}</span></div></div></div>
+  <div class="room-scene"><div class="room-deco">${DECO.map(([e], i) => chBossDone(i + 1) ? ic(e, 'big') : '').join('')}</div>${kikoImg('awake', 192, 'room-kiko')}<div class="room-info"><b>キコちゃん Lv.${lv.level}</b><div class="room-stats"><span>${ic('cricket')}${state.crickets}匹</span><span>${ic('sparkle')}脱皮 ${molts}回</span><span>${ic('meat')}特別なエサ ${foodLeft()}</span></div></div></div>
   <div class="panel"><div class="decor">${DECO.map(([e, n], i) => `<div class="tile ${chBossDone(i + 1) ? '' : 'locked'}">${ic(chBossDone(i + 1) ? e : 'question', 'big')}<small>${esc(n)}</small></div>`).join('')}<div class="tile ${state.boss.length === STAGE_IDS.length ? '' : 'locked'}">${ic(state.boss.length === STAGE_IDS.length ? 'crown' : 'question', 'big')}<small>王冠</small></div></div></div>
-  <div class="button-row"><button class="button" id="kiko-dance">${ic('music')}あそぶ</button>${state.specialFood ? '<button class="button secondary" id="kiko-food">' + ic('meat') + 'エサをあげる</button>' : ''}</div>`);
+  <div class="button-row"><button class="button" id="kiko-dance">${ic('music')}あそぶ</button>${foodLeft() ? '<button class="button secondary" id="kiko-food">' + ic('meat') + 'エサをあげる<small>コオロギ' + FOOD_VALUE + '匹分</small></button>' : ''}</div>
+  <p class="muted center">次のLv.まで あと${lv.next - state.crickets}匹 ／ 次の脱皮まで あと${3 - (lv.level - 1) % 3}レベル</p>
+  <p class="muted center">コオロギ：正解1問で1匹、復習で卒業すると3匹 ／ 特別なエサ：ボスに初めて勝つと1こ（コオロギ${FOOD_VALUE}匹分）</p>`);
   animate('room-kiko', 'awake', 400);
   $('kiko-dance').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'dance', 300, 3); };
-  if ($('kiko-food')) $('kiko-food').onclick = () => { if (stopAnim) stopAnim(); animate('room-kiko', 'food', 300, 1); };
+  if ($('kiko-food')) $('kiko-food').onclick = () => {
+    if (!foodLeft()) return;
+    const before = level().level; bump('fed'); save(); pushCloud(true);
+    const after = level().level, molt = Math.floor((after - 1) / 3) > Math.floor((before - 1) / 3);
+    room(); if (stopAnim) stopAnim(); animate('room-kiko', 'food', 300, 1);
+    modal(`${ic('meat')}もぐもぐ！`, `<p>コオロギ${FOOD_VALUE}匹分 になった！</p>${after > before ? `<p><b>Lv.${after} に上がった！</b>${molt ? '　脱皮した！' : ''}</p>` : `<p>次のLv.まで あと${level().next - state.crickets}匹</p>`}`);
+  };
 }
 
 // ---------- 設定 ----------
@@ -876,10 +887,11 @@ const loginBox = () => `<a class="button full" href="${KH_LOGIN_PAGE}" >1. Googl
 function bindLogin() { const f = $('code-form'); if (!f) return; f.onsubmit = e => { e.preventDefault(); const v = $('code-in').value.trim(); if (!v) return; lsSet('kh-token', v); lsSet('qc-key', null); location.reload(); }; }
 
 // ---------- 仕上げ（実力メーター・答えの一覧・公式と用語のカード） ----------
-// 出題の目安（★）：qc.wheelhouse.jp が公式レベル表をもとに分野ごとに付けた目安を、節に当てはめたもの
-const IMP_CH = { 2: 3, 3: 3, 4: 2, 5: 2, 6: 2, 7: 2, 8: 1 };
-const IMP_SEC = { '1-1': 3, '1-2': 3, '1-3': 2, '1-4': 2, '1-5': 2 };
-const impOf = s => s.chapter === 1 ? (IMP_SEC[s.id] || 1) : (IMP_CH[s.chapter] || 1);
+// 出題の目安（★）：山田テキスト（各節の見出しの「でる度」）に合わせたもの
+const IMP = { '1-1': 2, '1-2': 3, '1-3': 3, '1-4': 3, '1-5': 2, '1-6': 2, '1-7': 2, '1-8': 3, '1-9': 3, '1-10': 3, '1-11': 3,
+  '2-1': 3, '2-2': 3, '2-3': 1, '2-4': 3, '3-1': 3, '3-2': 3, '3-3': 2, '3-4': 3, '3-5': 3, '3-6': 2, '3-7': 1,
+  '4-1': 3, '4-2': 3, '4-3': 3, '4-4': 1, '4-5': 1, '4-6': 2, '4-7': 1, '5-1': 3, '6-1': 3, '6-2': 3, '6-3': 2, '7-1': 3, '8-1': 3, '8-2': 3 };
+const impOf = s => IMP[s.id] || 1;
 const stars = s => `<span class="stars">${ic('star').repeat(impOf(s))}</span>`;
 const pctS = v => (v[1] ? Math.round(v[0] / v[1] * 100) : 0) + '%';
 const meter = (label, a, b, line) => { const p = b ? a / b * 100 : 0; return `<div class="meter"><div class="meter-h"><b>${label}</b><span>${Math.round(p)}%<small>（${a}/${b}）</small></span></div><div class="meter-bar ${p >= line ? 'ok' : ''}"><div style="width:${p}%"></div><i style="left:${line}%"></i></div></div>`; };

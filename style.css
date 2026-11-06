@@ -254,3 +254,4 @@ details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
 .flash-b{font-size:1rem;line-height:1.7;white-space:pre-line;text-align:center}
 .flash small{color:var(--muted);font-size:.78rem}
 .flash .miss-n{display:flex;align-items:center;gap:4px;color:var(--bad)}
+.lvnote{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;font-size:.8rem;margin:2px 0 6px}.lvnote .ic{width:14px;height:14px}
