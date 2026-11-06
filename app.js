@@ -334,14 +334,28 @@ function animate(id, kind, ms = 300, loops = 0) {
 }
 function setPage(p) { const same = p === page; page = p; quiz = null; if (p !== 'drill') drill = null; if (!same) pushNav(); scrollTo(0, 0); render(); }
 // 画面を切り替えるたびに履歴を残し、ブラウザの「戻る」やスワイプで前の画面に戻れるようにする
-function pushNav() { try { history.pushState({ page, sectionId }, ''); } catch (_) {} }
+function pushNav() { try { if (replaceNav) { replaceNav = false; history.replaceState({ page, sectionId }, ''); } else history.pushState({ page, sectionId }, ''); } catch (_) {} }
+let replaceNav = false;
+// 問題の途中で画面を離れるとき：1問でも答えていたら確認する。最後の問題まで答えていたら判定だけつけて移動する
+const quizLast = () => quiz && quiz.index === quiz.questions.length - 1 && quiz.answered;
+const quizRisk = () => quiz && page === 'quiz' && (quiz.index > 0 || quiz.answered) && !quizLast();
+function leaveQuiz(go) {
+  if (quiz && page === 'quiz' && quizLast()) { quizJudge(quiz); save(); pushCloud(true); quiz = null; return go(); }
+  if (!quizRisk()) return go();
+  const what = { stage: '節クリアの判定', boss: 'ボス戦の判定', daily: '「今日はこれだけ」の記録', review: '復習の残り' }[quiz.mode] || '判定';
+  modal('問題をやめますか？', `<p>${what}はやり直しになります</p><div class="button-row"><button class="button secondary" id="leave-stay">つづける</button><button class="button" id="leave-go">やめる</button></div>`);
+  $('modal-close').hidden = true;
+  $('leave-stay').onclick = () => closeModal();
+  $('leave-go').onclick = () => { $('modal-overlay').classList.add('hidden'); $('modal-close').hidden = false; replaceNav = true; quiz = null; go(); };
+}
 window.addEventListener('popstate', e => {
   if (ignorePop) { ignorePop = false; return; }
   if (modalOpen()) { closeModal(true); return; } // 窓が開いていたら、最初の「戻る」は窓を閉じるだけ
   const st = e.state || { page: 'home' };
-  if (quiz && page === 'quiz' && !confirm('問題をやめますか？')) { pushNav(); return; }
-  page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page; sectionId = st.sectionId || sectionId;
-  quiz = null; if (page !== 'drill') drill = null; render(); scrollTo(0, 0);
+  const to = () => { page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page; sectionId = st.sectionId || sectionId;
+    quiz = null; if (page !== 'drill') drill = null; if (replaceNav) pushNav(); render(); scrollTo(0, 0); };
+  if (quizRisk()) { pushNav(); return leaveQuiz(to); }
+  leaveQuiz(to);
 });
 
 // ---------- ホーム ----------
@@ -538,9 +552,8 @@ function answer(i) {
   else reward(q.id, ok);
   render();
 }
-function quizFinish() {
-  const qz = quiz, n = qz.questions.length, score = Math.round(qz.correctCount / n * 100), pass = score >= 70;
-  let msg = '';
+function quizJudge(qz) {
+  const pass = Math.round(qz.correctCount / qz.questions.length * 100) >= 70; let msg = '';
   if (qz.mode === 'boss') {
     if (pass && !has(state.boss, qz.section)) { state.boss = stageSort([...state.boss, qz.section]); bump('specialFood'); msg = '特別なエサをゲット！'; }
     else msg = pass ? 'クリア！' : '70%でクリア';
@@ -550,6 +563,10 @@ function quizFinish() {
     else if (!pass) msg = '3問正解でクリア';
   }
   if (qz.mode === 'daily') { if (!state.dailyDone.includes(today())) state.dailyDone.push(today()); markStreakDay(); msg = `連続 ${streak()}日`; }
+  return { pass, msg };
+}
+function quizFinish() {
+  const qz = quiz, n = qz.questions.length, { pass, msg } = quizJudge(qz);
   save(); pushCloud(true);
   const si = SECS.findIndex(a => a.id === qz.section), nextSec = qz.mode === 'stage' && pass ? SECS[si + 1] : null;
   quiz = null; page = 'finish'; try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
@@ -859,7 +876,7 @@ function modal(title, html) {
 }
 function closeModal(fromPop) {
   if (!modalOpen()) return;
-  $('modal-overlay').classList.add('hidden');
+  $('modal-overlay').classList.add('hidden'); $('modal-close').hidden = false;
   if (!fromPop && history.state && history.state.modal) { ignorePop = true; history.back(); }
 }
 function render() {
@@ -906,8 +923,8 @@ async function boot() {
   try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   $('modal-close').onclick = () => closeModal();
   $('modal-overlay').onclick = e => { if (e.target === $('modal-overlay')) closeModal(); };
-  document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => setPage(b.dataset.page));
-  $('sync-btn').onclick = () => setPage('settings');
+  document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => leaveQuiz(() => setPage(b.dataset.page)));
+  $('sync-btn').onclick = () => leaveQuiz(() => setPage('settings'));
   DATA = await loadContent();
   if (!DATA) {
     const hasTok = !!lsGet('kh-token');
