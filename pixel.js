@@ -32,7 +32,10 @@
     question: ['....dddd....', '...dd..dd...', '...dd..dd...', '.......dd...', '......dd....', '.....dd.....', '.....dd.....', '............', '.....dd.....', '.....dd.....', '............', '............'],
     music: ['............', '....yyyyyyy.', '....yyyyyyy.', '....y.....y.', '....y.....y.', '....y.....y.', '....y.....y.', '..yyy...yyy.', '.yyyy..yyyy.', '.yyy...yyy..', '............', '............'],
     calendar: ['..k.....k...', '.rrrrrrrrrr.', '.rrkrrrrkrr.', '.wwwwwwwwww.', '.wkwkwkwkww.', '.wwwwwwwwww.', '.wkwkwkwkww.', '.wwwwwwwwww.', '.wkwkwkwwww.', '.wwwwwwwwww.', '.dddddddddd.', '............'],
-    disk: ['bbbbbbbbbbb.', 'bbllllllbdbb', 'bbllllllbdbb', 'bbllllllbbbb', 'bbbbbbbbbbbb', 'bbbbbbbbbbbb', 'bwwwwwwwwwwb', 'bwkkkkkkkkwb', 'bwwwwwwwwwwb', 'bwkkkkkkkkwb', 'bwwwwwwwwwwb', 'bbbbbbbbbbbb']
+    disk: ['bbbbbbbbbbb.', 'bbllllllbdbb', 'bbllllllbdbb', 'bbllllllbbbb', 'bbbbbbbbbbbb', 'bbbbbbbbbbbb', 'bwwwwwwwwwwb', 'bwkkkkkkkkwb', 'bwwwwwwwwwwb', 'bwkkkkkkkkwb', 'bwwwwwwwwwwb', 'bbbbbbbbbbbb'],
+    star: ['.....kk.....', '....kyyk....', '....kyyk....', 'kkkkkyykkkkk', 'kyyyyyyyyyyk', '.kyyyyyyyyk.', '..kyyyyyyk..', '..kyyyyyyk..', '.kyyykkyyyk.', '.kyykk.kkyk.', 'kyyk.....kk.', 'kkk.........'],
+    clock: ['...kkkkkk...', '..kwwwwwwk..', '.kwwwkwwwwk.', 'kwwwwkwwwwwk', 'kwwwwkwwwwwk', 'kwwwwkwwwwwk', 'kwwwwkkkkwwk', 'kwwwwwwwwwwk', 'kwwwwwwwwwwk', '.kwwwwwwwwk.', '..kwwwwwwk..', '...kkkkkk...'],
+    cards: ['............', '..kkkkkkkk..', '..kssssssk..', 'kkkkkkkkkssk', 'kwwwwwwwwksk', 'kwbbbbbbwksk', 'kwwwwwwwwksk', 'kwbbbbwwwksk', 'kwwwwwwwwkkk', 'kwbbbbbbwk..', 'kwwwwwwwwk..', 'kkkkkkkkkk..']
   };
   const cache = {};
   function url(name) {

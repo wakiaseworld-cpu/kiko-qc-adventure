@@ -35,7 +35,7 @@ const slash = s => s ? s.replace(/-/g, '/') : '—';
 const initial = () => ({
   version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
   crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {}, gradAwarded: {},
-  days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, updatedAt: 0
+  days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, exams: [], cards: {}, updatedAt: 0
 });
 const COUNTERS = ['crickets', 'specialFood', 'drillCorrect', 'drillCounter'];
 const DEV = (() => { let d = lsGet('kiko-qc-dev'); if (!d) { d = Math.random().toString(36).slice(2, 10); lsSet('kiko-qc-dev', d); } return d; })();
@@ -91,6 +91,11 @@ function mergeState(a, b) {
   m.dayCount = { ...(a.dayCount || {}) };
   for (const [d, n] of Object.entries(b.dayCount || {})) m.dayCount[d] = Math.max(m.dayCount[d] || 0, n);
   m.bestStreak = Math.max(a.bestStreak || 0, b.bestStreak || 0);
+  // 模擬試験の結果は id で合わせる。カードの「覚えた」は最後に押したほうを使う
+  const ex = new Map(); for (const e of [...(a.exams || []), ...(b.exams || [])]) if (e && e.id) ex.set(e.id, e);
+  m.exams = [...ex.values()].sort((x, y) => x.at - y.at).slice(-30);
+  m.cards = { ...(a.cards || {}) };
+  for (const [k, v] of Object.entries(b.cards || {})) if (!m.cards[k] || (v.at || 0) > (m.cards[k].at || 0)) m.cards[k] = v;
   // コオロギなどの数は端末ごとに持ち、合計を出す（2台で別々に進めても足し合わせになる）
   m.cnt = {};
   for (const src of [a, b]) for (const [dev, c] of Object.entries(src.cnt || {})) { const t = m.cnt[dev] || (m.cnt[dev] = {}); for (const k of COUNTERS) t[k] = Math.max(t[k] || 0, c[k] || 0); }
@@ -133,7 +138,7 @@ async function pullCloud() {
       const changed = canon(merged) !== canon(state);
       state = merged;
       lsSet(STORE, JSON.stringify(state));
-      if (changed && !quiz && !['lesson', 'drill', 'finish'].includes(page)) render();
+      if (changed && !quiz && !['lesson', 'drill', 'finish', 'examrun', 'examres', 'qlist', 'cards'].includes(page)) render();
       sync.status = 'synced'; sync.at = Date.now();
       if ((cloud.updatedAt || 0) < (state.updatedAt || 0) || changed || isDirty()) pushCloud();
     } else { sync.status = 'synced'; pushCloud(); }
@@ -157,7 +162,7 @@ async function pushCloud(win) {
       merged.updatedAt = Math.max(state.updatedAt || 0, cloud.updatedAt || 0);
       const changed = canon(merged) !== canon(state);
       state = merged; lsSet(STORE, JSON.stringify(state));
-      if (changed && !quiz && !['lesson', 'drill', 'finish'].includes(page)) render();
+      if (changed && !quiz && !['lesson', 'drill', 'finish', 'examrun', 'examres', 'qlist', 'cards'].includes(page)) render();
     }
     const sent = JSON.stringify(state);
     const j = await api('qc_save', sent);
@@ -285,7 +290,7 @@ function todayPlan() {
 }
 
 // ---------- 答えの記録 ----------
-function reward(qid, correct) {
+function reward(qid, correct, quiet) {
   const h = histBy(state.history[qid]) || { by: {} }, mine = h.by[DEV] || (h.by[DEV] = { a: 0, c: 0 });
   mine.a++; if (correct) mine.c++; h.last = today(); h.at = Date.now(); state.history[qid] = histSum(h);
   const r = state.review[qid];
@@ -298,7 +303,7 @@ function reward(qid, correct) {
       r.at = Date.now();
     }
   } else state.review[qid] = { step: 0, due: addDays(today(), 1), at: Date.now() };
-  totals(state); markActive(isEx(qid)); save();
+  totals(state); markActive(isEx(qid)); if (!quiet) save();
 }
 
 // ---------- 画面の状態 ----------
@@ -313,6 +318,7 @@ function typeInto(id, text) {
 }
 function main(html) {
   if (stopAnim) { stopAnim(); stopAnim = null; }
+  if (page !== 'examrun') examPause();
   clearInterval(typeTimer);
   $('app').innerHTML = html; chrome();
   document.querySelectorAll('#tabs button').forEach(el => el.classList.toggle('on', el.dataset.page === page));
@@ -352,7 +358,7 @@ window.addEventListener('popstate', e => {
   if (ignorePop) { ignorePop = false; return; }
   if (modalOpen()) { closeModal(true); return; } // 窓が開いていたら、最初の「戻る」は窓を閉じるだけ
   const st = e.state || { page: 'home' };
-  const to = () => { page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page; sectionId = st.sectionId || sectionId;
+  const to = () => { page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page === 'examres' ? 'exam' : st.page === 'examrun' && !examSession() ? 'exam' : st.page; sectionId = st.sectionId || sectionId;
     quiz = null; if (page !== 'drill') drill = null; if (replaceNav) pushNav(); render(); scrollTo(0, 0); };
   if (quizRisk()) { pushNav(); return leaveQuiz(to); }
   leaveQuiz(to);
@@ -402,14 +408,14 @@ function nextStudySec() {
 const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`);
 function map() {
   const ph = phase();
-  let html = '<h2>' + ic('map') + 'マップ</h2>';
+  let html = '<h2>' + ic('map') + 'マップ</h2><p class="muted imp-note">' + ic('star') + '＝出題の目安（3つが一番よく出る）</p>';
   const cur = secBy(state.lastSection), curSt = cur ? stageOf(cur).id : STAGE_IDS[0];
   for (const st of STAGES) {
     const ch = { id: st.id }, secs = st.secs, done = secs.filter(s => has(state.cleared, s.id)).length;
     const pri = ph.chapters && ph.chapters.includes(st.chapter);
     const open = openChaps ? openChaps.has(st.id) : (ph.chapters ? pri && (!st.part || st.id === curSt || !secs.every(s => has(state.cleared, s.id)) && STAGES.filter(x => x.chapter === st.chapter).find(x => !x.secs.every(s => has(state.cleared, s.id))) === st) : curSt === st.id);
     html += `<details class="chapter ${pri ? 'priority' : ''}" data-ch="${st.id}" ${open ? 'open' : ''}><summary class="chapter-header"><div class="chapter-num">${st.chapter}${st.part ? '<small>' + '①②③'[st.part - 1] + '</small>' : ''}</div><div style="flex:1"><h3>${esc(stageName(st))}</h3><div class="muted">${done}/${secs.length}節${has(state.boss, ch.id) ? ' ／ ' + ic('trophy') : ''}</div></div>${pri ? '<span class="pill gold">優先</span>' : ''}<span class="chev"></span></summary><div class="stage-list">`;
-    for (const s of secs) html += `<button class="stage" data-stage="${s.id}"><span>${s.number}. ${esc(s.title)}</span><span class="tag">${has(state.cleared, s.id) ? ic('check') : unlockedSec(s) ? ic('play') : ic('lock')}</span></button>`;
+    for (const s of secs) html += `<button class="stage" data-stage="${s.id}"><span>${s.number}. ${esc(s.title)}${stars(s)}</span><span class="tag">${has(state.cleared, s.id) ? ic('check') : unlockedSec(s) ? ic('play') : ic('lock')}</span></button>`;
     html += `</div><button class="button gold full boss-btn" data-boss="${ch.id}" ${done !== secs.length ? 'disabled' : ''}>${ic('crown')}ボス戦${has(state.boss, ch.id) ? '（再挑戦）' : ''}</button></details>`;
   }
   main(html);
@@ -466,6 +472,7 @@ function lesson() {
     <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">' + ic('check') + '</span>' : ''}</div>
     <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>${tatoeHtml(s)}
     <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}${s.questions.length}問</button></div>
+    <button class="mini full" id="qlist-open">${ic('books')}答えと解説の一覧</button>
     ${open ? '' : '<p class="note">' + ic('lock') + '前の節をクリアすると解けます</p>'}
     <div id="full-text" class="lesson-text" hidden>${body}${open ? `<button id="text-quiz" class="button full">${ic('pencil')}問題を解く</button>` : ''}</div>
     <div class="button-row" id="sec-nav"><button id="prev-section" class="button secondary">← 前</button><button id="next-section" class="button secondary">次 →</button></div>
@@ -481,6 +488,7 @@ function lesson() {
     c.querySelectorAll('[data-grade]').forEach(b => b.onclick = () => { const ok = b.dataset.grade === '1'; reward(c.dataset.ex, ok); b.parentNode.outerHTML = `<p class="exdone">${ok ? ic('check') + 'OK' : ic('loop') + '復習ボックスに入れました'}</p>`; });
   });
   $('stage-quiz').onclick = () => startQuiz(s.questions.map(q => ({ ...q, section: s })), 'stage', s.id);
+  $('qlist-open').onclick = () => openList(s.id);
   if ($('text-quiz')) $('text-quiz').onclick = $('stage-quiz').onclick;
   const i = SECS.findIndex(a => a.id === s.id);
   $('prev-section').disabled = i === 0;
@@ -867,6 +875,255 @@ const loginBox = () => `<a class="button full" href="${KH_LOGIN_PAGE}" >1. Googl
   <form id="code-form" class="code-form"><input class="input" id="code-in" placeholder="合言葉" autocomplete="off" autocapitalize="off"><button class="button">2. 入れる</button></form>`;
 function bindLogin() { const f = $('code-form'); if (!f) return; f.onsubmit = e => { e.preventDefault(); const v = $('code-in').value.trim(); if (!v) return; lsSet('kh-token', v); lsSet('qc-key', null); location.reload(); }; }
 
+// ---------- 仕上げ（模擬試験・実力メーター・答えの一覧・公式と用語のカード） ----------
+// 出題の目安（★）：qc.wheelhouse.jp が公式レベル表をもとに分野ごとに付けた目安を、節に当てはめたもの
+const IMP_CH = { 2: 3, 3: 3, 4: 2, 5: 2, 6: 2, 7: 2, 8: 1 };
+const IMP_SEC = { '1-1': 3, '1-2': 3, '1-3': 2, '1-4': 2, '1-5': 2 };
+const impOf = s => s.chapter === 1 ? (IMP_SEC[s.id] || 1) : (IMP_CH[s.chapter] || 1);
+const stars = s => `<span class="stars">${ic('star').repeat(impOf(s))}</span>`;
+const mmss = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+const pctS = v => (v[1] ? Math.round(v[0] / v[1] * 100) : 0) + '%';
+const meter = (label, a, b, line) => { const p = b ? a / b * 100 : 0; return `<div class="meter"><div class="meter-h"><b>${label}</b><span>${Math.round(p)}%<small>（${a}/${b}）</small></span></div><div class="meter-bar ${p >= line ? 'ok' : ''}"><div style="width:${p}%"></div><i style="left:${line}%"></i></div></div>`; };
+// 問題・選択肢・正解・解説をまとめて見せるカード（picked：模擬試験で選んだ答え。null は未回答）
+function qCard(q, no, picked) {
+  return `<div class="qcard"><p class="qcard-q"><b class="qno">問${no}</b>${esc(q.stem)}</p><div class="qcard-o">${q.options.map((o, i) => `<p class="${i === q.answer ? 'right' : i === picked ? 'miss' : ''}"><b>${KANA[i]}</b><span>${esc(o)}</span>${i === q.answer ? ic('check') : ''}</p>`).join('')}</div>${picked === null ? '<p class="muted">未回答</p>' : ''}<div class="explain">${q.drill ? stepsHtml(q.explanation) : `<p class="pre">${esc(q.explanation)}</p>`}</div></div>`;
+}
+
+// ----- 模擬試験 -----
+// 途中の試験はこの端末にだけ保存する（閉じても続きから。時間は止まる）。結果は記録（state.exams）に入れて2台で共有
+const EXAM_KEY = 'kiko-qc-exam', EXAM_LAST = 'kiko-qc-exam-last';
+const EXAM_SIZES = { half: { n: 50, min: 45, drills: 5, name: 'ハーフ' }, full: { n: 100, min: 90, drills: 10, name: 'フル' } };
+const DRILL_CH = { stats: 2, transform: 2, hist: 3, normal: 5, binom: 5, xbar: 6, np: 6, p: 6, cp: 7, cpk: 7, oneside: 7, corr: 8 };
+const isMethod = ch => ch !== 1;
+let exam = null, examTimer = null, examTick = 0, examRes = null;
+function examSession() {
+  if (!exam) { try { const o = JSON.parse(lsGet(EXAM_KEY) || 'null'); if (o && Array.isArray(o.qs) && o.qs.length) exam = o; } catch (_) {} }
+  return exam;
+}
+const examStore = () => { if (exam) lsSet(EXAM_KEY, JSON.stringify(exam)); };
+function examPause() {
+  if (examTimer) { clearInterval(examTimer); examTimer = null; }
+  if (exam && examTick) { exam.used += Date.now() - examTick; examTick = 0; examStore(); }
+}
+function examNew(kind) {
+  const cfg = EXAM_SIZES[kind], half = cfg.n / 2, idx = id => SECS.findIndex(s => s.id === id);
+  const lastOf = ch => SECS.reduce((a, s, i) => s.chapter === ch ? i : a, 0);
+  const pool = f => shuffle(SECS.filter(f).flatMap(s => s.questions.map(q => ({ ...shuffleChoices(q), sid: s.id, ch: s.chapter, k: idx(s.id) }))));
+  const types = shuffle(DRILLS.map(d => d[0]));
+  const drills = Array.from({ length: cfg.drills }, (_, i) => { const t = types[i % types.length]; return { ...makeDrill(t), id: 'drill', drill: true, ch: DRILL_CH[t], sid: null, k: lastOf(DRILL_CH[t]) + 0.5 }; });
+  const met = pool(s => s.chapter !== 1).slice(0, half - cfg.drills).concat(drills).sort((a, b) => a.k - b.k);
+  const pra = pool(s => s.chapter === 1).slice(0, half).sort((a, b) => a.k - b.k);
+  exam = { id: Date.now().toString(36) + DEV, kind, n: cfg.n, limit: cfg.min * 60000, used: 0, qs: met.concat(pra), ans: Array(cfg.n).fill(null), flag: [], idx: 0, gridOpen: false };
+  examStore();
+}
+function examStartTimer() {
+  if (examTimer || !exam) return;
+  examTick = Date.now(); let k = 0;
+  examTimer = setInterval(() => {
+    if (!exam || page !== 'examrun') return examPause();
+    const now = Date.now(); exam.used += now - examTick; examTick = now;
+    const left = exam.limit - exam.used, el = $('ex-timer');
+    if (el) { el.textContent = mmss(left); el.classList.toggle('warn', left < 5 * 60000); }
+    if (left <= 0) return examSubmit(true);
+    if (++k % 5 === 0) examStore();
+  }, 1000);
+}
+function examRun() {
+  const e = examSession(); if (!e) return setPage('exam');
+  const q = e.qs[e.idx], done = e.ans.filter(x => x !== null).length, left = e.limit - e.used;
+  main(`<div class="section-top"><div><div class="label">${ic('clock')}模擬試験（${EXAM_SIZES[e.kind].name}）</div><h2>問${e.idx + 1}<small class="muted">／${e.n}　${isMethod(q.ch) ? '手法' : '実践'}</small></h2></div><span class="pill timer ${left < 5 * 60000 ? 'warn' : ''}" id="ex-timer">${mmss(left)}</span></div>
+  <div class="progress"><div id="ex-prog" style="width:${done / e.n * 100}%"></div></div>
+  <div class="question-card"><h3>${esc(q.stem)}</h3>
+    <div class="choices">${q.options.map((o, i) => `<button class="choice ${e.ans[e.idx] === i ? 'picked' : ''}" data-ea="${i}"><b>${KANA[i]}</b>${esc(o)}</button>`).join('')}</div>
+    <div class="ex-nav"><button class="button secondary" id="ex-prev" ${e.idx === 0 ? 'disabled' : ''}>← 前</button><button class="button secondary ${e.flag.includes(e.idx) ? 'on' : ''}" id="ex-flag">${ic('flag')}見直す</button><button class="button" id="ex-next">${e.idx === e.n - 1 ? '一覧へ' : '次 →'}</button></div>
+  </div>
+  <div class="button-row"><button class="button secondary small" id="ex-ntable">${ic('bar')}正規分布表</button><button class="button secondary small" id="calc-toggle">${ic('calc')}電卓</button></div><div id="calc-slot"></div>
+  <details class="panel exgrid-wrap" id="ex-grid" ${e.gridOpen ? 'open' : ''}><summary>${ic('books')}問題一覧（答えた <span id="ex-done">${done}</span>/${e.n}）</summary>
+    <p class="muted">${ic('flag')}＝見直す印</p><div class="exgrid">${e.qs.map((_, i) => `<button class="${e.ans[i] !== null ? 'done' : ''} ${e.flag.includes(i) ? 'flag' : ''} ${i === e.idx ? 'cur' : ''}" data-go="${i}">${i + 1}</button>`).join('')}</div></details>
+  <button class="button gold full" id="ex-submit">提出する</button>
+  <p class="muted center">途中でやめても、続きから再開できます（その間は時間が止まります）</p>`);
+  const go = i => { e.idx = i; examStore(); render(); scrollTo(0, 0); };
+  document.querySelectorAll('[data-ea]').forEach(b => b.onclick = () => {
+    e.ans[e.idx] = +b.dataset.ea; examStore();
+    document.querySelectorAll('[data-ea]').forEach(x => x.classList.toggle('picked', x === b));
+    const g = document.querySelector(`[data-go="${e.idx}"]`); if (g) g.classList.add('done');
+    const n = e.ans.filter(x => x !== null).length; $('ex-done').textContent = n; $('ex-prog').style.width = n / e.n * 100 + '%';
+  });
+  $('ex-prev').onclick = () => go(e.idx - 1);
+  $('ex-next').onclick = () => { if (e.idx < e.n - 1) return go(e.idx + 1); e.gridOpen = true; examStore(); render(); $('ex-grid').scrollIntoView({ block: 'start' }); };
+  $('ex-flag').onclick = () => { e.flag = e.flag.includes(e.idx) ? e.flag.filter(x => x !== e.idx) : [...e.flag, e.idx]; examStore(); $('ex-flag').classList.toggle('on'); const g = document.querySelector(`[data-go="${e.idx}"]`); if (g) g.classList.toggle('flag'); };
+  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(+b.dataset.go));
+  $('ex-grid').ontoggle = () => { e.gridOpen = $('ex-grid').open; examStore(); };
+  $('ex-ntable').onclick = () => modal(ic('bar') + '正規分布表', normalTable());
+  $('calc-toggle').onclick = () => toggleCalc('calc-slot');
+  $('ex-submit').onclick = () => {
+    const blank = e.ans.filter(x => x === null).length, fl = e.flag.length;
+    modal('提出しますか？', `<p>${blank ? `未回答 ${blank}問` : '全部答えました'}${fl ? ` ／ 見直す印 ${fl}問` : ''}</p><div class="button-row"><button class="button secondary" id="sub-no">もどる</button><button class="button" id="sub-yes">提出する</button></div>`);
+    $('sub-no').onclick = () => closeModal();
+    $('sub-yes').onclick = () => { closeModal(); examSubmit(false); };
+  };
+  examStartTimer();
+}
+function examSubmit(timeUp) {
+  const e = examSession(); if (!e) return;
+  examPause();
+  const r = { id: e.id, at: Date.now(), kind: e.kind, n: e.n, used: Math.min(e.used, e.limit), timeUp: !!timeUp, met: [0, 0], pra: [0, 0], ch: {} };
+  const wrong = [];
+  e.qs.forEach((q, i) => {
+    const a = e.ans[i], ok = a === q.answer, m = isMethod(q.ch) ? r.met : r.pra, c = r.ch[q.ch] || (r.ch[q.ch] = [0, 0]);
+    m[1]++; c[1]++; if (ok) { m[0]++; c[0]++; } else wrong.push(i);
+    if (a === null) return; // 未回答は記録しない
+    if (q.drill) { if (ok) { bump('drillCorrect'); bump('drillCounter'); if (state.drillCounter % 2 === 0) bump('crickets'); } markActive(); }
+    else reward(q.id, ok, true);
+  });
+  const tot = r.met[0] + r.pra[0];
+  r.pass = tot * 100 >= r.n * 70 && r.met[0] * 100 >= r.met[1] * 50 && r.pra[0] * 100 >= r.pra[1] * 50;
+  state.exams = [...(state.exams || []), r].slice(-30);
+  save(); pushCloud(true);
+  examRes = { r, qs: e.qs, ans: e.ans, wrong };
+  lsSet(EXAM_LAST, JSON.stringify(examRes)); lsSet(EXAM_KEY, null); exam = null;
+  page = 'examres'; try { history.replaceState({ page: 'exam' }, ''); } catch (_) {}
+  scrollTo(0, 0); render();
+  if (timeUp) modal('時間切れ', `<p>${EXAM_SIZES[r.kind].min}分たったので提出しました</p>`);
+}
+function examResult() {
+  if (!examRes) { try { examRes = JSON.parse(lsGet(EXAM_LAST) || 'null'); } catch (_) {} }
+  if (!examRes) return setPage('exam');
+  const { r, qs, ans, wrong } = examRes, tot = r.met[0] + r.pra[0];
+  main(`<h2 class="center">${ic('clock')}模擬試験の結果</h2>
+  <div class="rpg"><img class="pxi" id="finish-kiko" src="${KIKO.png.anim[r.pass ? 'dance' : 'awake'][0]}" alt=""><p id="rpg-msg"></p></div>
+  <div class="panel">${meter('総合（70%以上）', tot, r.n, 70)}${meter('手法（50%以上）', r.met[0], r.met[1], 50)}${meter('実践（50%以上）', r.pra[0], r.pra[1], 50)}
+    <p class="muted">かかった時間 ${mmss(r.used)}${r.timeUp ? '（時間切れ）' : ''}</p></div>
+  <div class="panel"><h3>章ごと</h3>${Object.keys(r.ch).sort((a, b) => a - b).map(c => `<div class="chrow"><span>第${c}章 ${esc(chTitle(+c))}</span><b>${r.ch[c][0]}/${r.ch[c][1]}</b></div>`).join('')}</div>
+  <details class="panel"><summary>まちがえた問題（${wrong.length}問）</summary><p class="muted">答えてまちがえた問題は、復習ボックスに入りました</p>${wrong.map(i => qCard(qs[i], i + 1, ans[i])).join('') || '<p class="empty">全問正解！</p>'}</details>
+  <button class="button full" id="ex-hub">仕上げへ</button>`);
+  animate('finish-kiko', r.pass ? 'dance' : 'awake', 300);
+  typeInto('rpg-msg', r.pass ? `ごうかく ライン クリア！ ${tot}/${r.n}もん！` : `あと すこし！ ${tot}/${r.n}もん`);
+  $('ex-hub').onclick = () => setPage('exam');
+}
+
+// ----- 実力メーター：いま解ける問題の割合（未回答と、復習ボックスで卒業していない問題は「解けない」） -----
+function skill() {
+  const r = { all: [0, 0], met: [0, 0], pra: [0, 0], ch: {} };
+  for (const c of CHAPS) r.ch[c.id] = [0, 0];
+  for (const s of SECS) for (const q of s.questions) {
+    const h = state.history[q.id], rv = state.review[q.id];
+    const ok = h && h.correct > 0 && !(rv && rv.step < 3) ? 1 : 0;
+    for (const t of [r.all, s.chapter === 1 ? r.pra : r.met, r.ch[s.chapter]]) { t[0] += ok; t[1]++; }
+  }
+  const need = (v, p) => Math.max(0, Math.ceil(v[1] * p / 100) - v[0]);
+  const n = [['総合', need(r.all, 70)], ['手法', need(r.met, 50)], ['実践', need(r.pra, 50)]].filter(x => x[1]);
+  r.msg = n.length ? '合格ラインまで ' + n.map(([k, v]) => `${k}あと${v}問`).join('・') : '合格ラインを超えています！';
+  return r;
+}
+
+// ----- 仕上げの画面 -----
+function examHub() {
+  const e = examSession(), sk = skill(), last = (state.exams || []).slice(-5).reverse();
+  main(`<h2>${ic('clock')}仕上げ</h2>
+  <div class="panel strong"><h3>${ic('clock')}模擬試験</h3>
+    ${e ? `<p>途中の試験があります（${EXAM_SIZES[e.kind].name}・答えた ${e.ans.filter(x => x !== null).length}/${e.n}・残り ${mmss(e.limit - e.used)}）</p><div class="button-row"><button class="button" id="ex-resume">${ic('play')}つづける</button><button class="mini" id="ex-quit">やめる</button></div>`
+      : `<p class="muted">解いている間は答えを見せません。総合70%以上、かつ手法・実践それぞれ50%以上で合格ライン</p><div class="duo"><button class="button big" data-exam="half">ハーフ<small>50問・45分</small></button><button class="button pop big" data-exam="full">フル<small>100問・90分</small></button></div>`}
+    ${last.length ? `<div class="exlog">${last.map(r => `<div class="chrow"><span>${slash(iso(new Date(r.at))).slice(5)} ${EXAM_SIZES[r.kind]?.name || ''}</span><span>${pctS([r.met[0] + r.pra[0], r.n])}<small class="muted">（手法${pctS(r.met)}・実践${pctS(r.pra)}）</small></span><b>${r.pass ? ic('check') : '—'}</b></div>`).join('')}</div>${examLastOk() ? '<button class="mini full" id="ex-last">前回の結果を見る</button>' : ''}` : ''}
+  </div>
+  <div class="panel"><h3>${ic('bar')}実力メーター</h3><p class="muted">いま解ける問題の割合。まだ解いていない問題と、復習ボックスにある問題は「解けない」に数えます</p>
+    ${meter('総合（70%）', sk.all[0], sk.all[1], 70)}${meter('手法（50%）', sk.met[0], sk.met[1], 50)}${meter('実践（50%）', sk.pra[0], sk.pra[1], 50)}
+    <p><b>${esc(sk.msg)}</b></p>
+    <details class="chd"><summary>章ごとに見る</summary>${CHAPS.map(c => { const v = sk.ch[c.id]; return `<div class="chrow"><span>第${c.id}章 ${esc(c.title)}</span><span class="muted">${v[0]}/${v[1]}</span><b>${pctS(v)}</b></div>`; }).join('')}</details>
+  </div>
+  <div class="panel"><h3>${ic('books')}答えと解説の一覧</h3><select class="input" id="ql-sel">${SECS.map(s => `<option value="${s.id}" ${s.id === (sectionId || state.lastSection) ? 'selected' : ''}>${s.chapter}-${s.number} ${esc(s.title)}</option>`).join('')}</select><button class="button secondary full" id="ql-go" style="margin-top:8px">開く</button></div>
+  <div class="panel"><h3>${ic('cards')}公式・用語カード</h3><p class="muted">覚えた　公式 ${cardOk(formulaCards())}/${FORMULAS.length}　用語 ${cardOk(termCards())}/${termCards().length}</p><div class="duo"><button class="button big" data-cards="f">公式<small>${FORMULAS.length}枚</small></button><button class="button big" data-cards="t">用語<small>${termCards().length}枚</small></button></div></div>`);
+  document.querySelectorAll('[data-exam]').forEach(b => b.onclick = () => { examNew(b.dataset.exam); page = 'examrun'; pushNav(); scrollTo(0, 0); render(); });
+  if ($('ex-resume')) $('ex-resume').onclick = () => { page = 'examrun'; pushNav(); scrollTo(0, 0); render(); };
+  if ($('ex-quit')) $('ex-quit').onclick = () => {
+    modal('途中の試験をやめますか？', `<p>答えた分は記録されません</p><div class="button-row"><button class="button secondary" id="q-no">もどる</button><button class="button" id="q-yes">やめる</button></div>`);
+    $('q-no').onclick = () => closeModal();
+    $('q-yes').onclick = () => { closeModal(); exam = null; lsSet(EXAM_KEY, null); render(); };
+  };
+  if ($('ex-last')) $('ex-last').onclick = () => { examRes = null; page = 'examres'; pushNav(); scrollTo(0, 0); render(); };
+  $('ql-go').onclick = () => openList($('ql-sel').value);
+  document.querySelectorAll('[data-cards]').forEach(b => b.onclick = () => openCards(b.dataset.cards));
+}
+const examLastOk = () => !!lsGet(EXAM_LAST);
+
+// ----- 答えと解説の一覧 -----
+function openList(id) { sectionId = id; page = 'qlist'; pushNav(); scrollTo(0, 0); render(); }
+function qlist() {
+  const s = secBy(sectionId); if (!s) return setPage('exam');
+  const i = SECS.indexOf(s);
+  main(`<div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
+  <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2><span class="pill">${s.questions.length}問</span></div>
+  <p class="muted">${ic('books')}答えと解説の一覧（読み返し用）</p>
+  ${s.questions.map((q, k) => qCard(q, k + 1)).join('')}
+  <div class="button-row"><button id="ql-prev" class="button secondary" ${i === 0 ? 'disabled' : ''}>← 前の節</button><button id="ql-next" class="button secondary" ${i === SECS.length - 1 ? 'disabled' : ''}>次の節 →</button></div>
+  <button class="mini full" id="ql-lesson">${ic('book')}この節のテキストへ</button>`);
+  $('ql-prev').onclick = () => openList(SECS[i - 1].id);
+  $('ql-next').onclick = () => openList(SECS[i + 1].id);
+  $('ql-lesson').onclick = () => openLesson(s.id);
+}
+
+// ----- 公式・用語カード -----
+const FORMULAS = [
+  ['平均 x̄', 'x̄ ＝ Σx ÷ n'],
+  ['範囲 R', 'R ＝ 最大値 − 最小値'],
+  ['平方和 S', 'S ＝ Σ(x − x̄)² ＝ Σx² − (Σx)² ÷ n'],
+  ['不偏分散 V', 'V ＝ S ÷ (n − 1)', 'n ではなく n−1 で割る'],
+  ['標準偏差 s', 's ＝ √V'],
+  ['変動係数 CV', 'CV ＝ s ÷ x̄'],
+  ['データ変換の戻し', 'y ＝ (x − a) × h のとき\nx̄ ＝ a ＋ ȳ ÷ h\nS ＝ Sy ÷ h²'],
+  ['ヒストグラムの区間の数', '区間の数 ≒ √n', '区間の幅は測定単位の整数倍にする'],
+  ['第1区間の下側境界値', '最小値 − 測定単位 ÷ 2'],
+  ['標準化（Kp）', 'K ＝ (x − μ) ÷ σ', 'K から正規分布表で確率を読む'],
+  ['正規分布の範囲と割合', '±1σ 約68.3%\n±2σ 約95.4%\n±3σ 約99.7%'],
+  ['二項分布の確率', 'P(x) ＝ nCx × pˣ × (1 − p)ⁿ⁻ˣ'],
+  ['二項分布の平均と標準偏差', '平均 np\n標準偏差 √(np(1 − p))'],
+  ['x̄管理図', 'CL ＝ x̿\nUCL ＝ x̿ ＋ A2R̄\nLCL ＝ x̿ − A2R̄'],
+  ['R管理図', 'CL ＝ R̄\nUCL ＝ D4R̄', 'n が6以下では LCL は考えない'],
+  ['np管理図', 'CL ＝ np̄\nUCL・LCL ＝ np̄ ± 3√(np̄(1 − p̄))', 'LCL がマイナスなら「なし」'],
+  ['p管理図', 'CL ＝ p̄\nUCL・LCL ＝ p̄ ± 3√(p̄(1 − p̄) ÷ n)'],
+  ['工程能力指数 Cp', 'Cp ＝ (SU − SL) ÷ 6s'],
+  ['かたよりを考えた Cpk', '(SU − x̄) ÷ 3s と (x̄ − SL) ÷ 3s の小さいほう'],
+  ['片側規格の工程能力指数', '上限だけ：(SU − x̄) ÷ 3s\n下限だけ：(x̄ − SL) ÷ 3s'],
+  ['工程能力の判定', '1.67以上 十分すぎる\n1.33以上 十分\n1.00以上 まずまず\n0.67以上 不足\n0.67未満 非常に不足'],
+  ['偏差積和 Sxy', 'Sxy ＝ Σxy − (Σx × Σy) ÷ n'],
+  ['相関係数 r', 'r ＝ Sxy ÷ √(Sxx × Syy)', 'r は −1 から 1 のあいだ'],
+  ['改善効果の金額', '（対策前の件数 − 対策後の件数）× 1件あたりの損失']
+];
+const formulaCards = () => FORMULAS.map(([f, b, note]) => ({ id: 'f:' + f, front: f, back: b, note }));
+// 用語カードは、本文の「● 用語：説明」の行から作る
+function termCards() {
+  if (termCards.c) return termCards.c;
+  const seen = new Set(), out = [];
+  for (const s of SECS) for (const l of s.text.replace(/​/g, '').split('\n')) {
+    const m = l.match(/^●\s+([^：]{1,30})：(.+)$/); if (!m) continue;
+    const t = m[1].trim(); if (seen.has(t)) continue; seen.add(t);
+    out.push({ id: 't:' + s.id + ':' + t, front: t, back: tight(m[2].trim()), src: s });
+  }
+  return (termCards.c = out);
+}
+const cardOk = list => list.filter(c => state.cards?.[c.id]?.ok).length;
+let deck = null;
+function openCards(kind) {
+  const all = kind === 'f' ? formulaCards() : termCards(), notOk = all.filter(c => !state.cards?.[c.id]?.ok);
+  deck = { kind, list: shuffle(notOk.length ? notOk : all), i: 0, flip: false, all: all.length, again: !notOk.length };
+  page = 'cards'; pushNav(); scrollTo(0, 0); render();
+}
+function cardsView() {
+  if (!deck) return setPage('exam');
+  const name = deck.kind === 'f' ? '公式' : '用語', c = deck.list[deck.i], okN = cardOk(deck.kind === 'f' ? formulaCards() : termCards());
+  if (!c) {
+    main(`<h2>${ic('cards')}${name}カード</h2><div class="rpg"><p>${deck.list.length}まい おわり！ おぼえた ${okN}/${deck.all}</p></div><div class="button-row"><button class="button" id="cd-again">もう一度</button><button class="mini" id="cd-back">仕上げへ</button></div>`);
+    $('cd-again').onclick = () => openCards(deck.kind); $('cd-back').onclick = () => setPage('exam'); return;
+  }
+  main(`<div class="section-top"><h2>${ic('cards')}${name}カード</h2><span class="pill">${deck.i + 1}/${deck.list.length}</span></div>
+  <p class="muted">覚えた ${okN}/${deck.all}　${deck.again ? '全部覚えたので、全部から出しています' : 'まだのカードだけ出しています'}</p>
+  <button class="flash ${deck.flip ? 'flip' : ''}" id="cd-card"><span class="flash-f">${esc(c.front)}</span>${deck.flip ? `<span class="flash-b">${esc(c.back)}</span>${c.note ? `<small>${esc(c.note)}</small>` : ''}${c.src ? `<small>${c.src.chapter}-${c.src.number} ${esc(c.src.title)}</small>` : ''}` : `<small>タップで${deck.kind === 'f' ? '式' : '説明'}を見る</small>`}</button>
+  ${deck.flip ? `<div class="button-row"><button class="button secondary" data-know="0">${ic('loop')}まだ</button><button class="button" data-know="1">${ic('check')}覚えた</button></div>` : ''}`);
+  $('cd-card').onclick = () => { deck.flip = !deck.flip; render(); };
+  document.querySelectorAll('[data-know]').forEach(b => b.onclick = () => { state.cards = state.cards || {}; state.cards[c.id] = { ok: b.dataset.know === '1', at: Date.now() }; save(); deck.i++; deck.flip = false; render(); scrollTo(0, 0); });
+}
+document.addEventListener('visibilitychange', () => { if (page !== 'examrun') return; if (document.visibilityState === 'hidden') examPause(); else render(); });
+
 // ---------- 共通 ----------
 const modalOpen = () => !$('modal-overlay').classList.contains('hidden');
 let ignorePop = false;
@@ -880,7 +1137,7 @@ function closeModal(fromPop) {
   if (!fromPop && history.state && history.state.modal) { ignorePop = true; history.back(); }
 }
 function render() {
-  ({ home, map, lesson, quiz: quizView, review, drill: drillView, room, settings }[page] || (() => {}))();
+  ({ home, map, lesson, quiz: quizView, review, drill: drillView, room, settings, exam: examHub, examrun: examRun, examres: examResult, qlist, cards: cardsView }[page] || (() => {}))();
 }
 
 // ---------- 中身の読み込み（暗号化された content.bin にも対応） ----------
