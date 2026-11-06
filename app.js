@@ -44,7 +44,7 @@ const DEV = (() => { let d = lsGet('kiko-qc-dev'); if (!d) { d = Math.random().t
 // 問題ごとのごほうび（同じ問題・同じ日は1回、卒業は1回）は記録の数から出すので、2台で解いても二重にならない
 function totals(st) {
   for (const k of COUNTERS) st[k] = Object.values(st.cnt || {}).reduce((a, c) => a + (c[k] || 0), 0);
-  st.crickets += Object.keys(st.practiceAwarded || {}).length + 3 * Object.keys(st.gradAwarded || {}).length + FOOD_VALUE * (st.fed || 0);
+  st.crickets += Object.keys(st.practiceAwarded || {}).length + 3 * Object.keys(st.gradAwarded || {}).length + FOOD_VALUE * Math.min(st.fed || 0, st.specialFood || 0); // 2台で同じエサを使っても、もらった数より多くは数えない
   return st;
 }
 const histBy = h => h ? (h.by ? h : { ...h, by: { base: { a: h.attempts || 0, c: h.correct || 0 } } }) : null;
