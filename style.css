@@ -227,3 +227,4 @@ details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
 .st-h{flex:none;font-size:.7rem;padding:0 6px;border-radius:4px;background:var(--soft);color:var(--muted);border:1px solid var(--line)}
 .steps .st.last .st-h{background:var(--good);color:var(--surface);border-color:var(--good)}
 .steps .st span{min-width:0}
+[hidden]{display:none!important}

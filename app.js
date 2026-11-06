@@ -406,7 +406,7 @@ function map() {
 function openLesson(id, showText = false) {
   sectionId = id; state.lastSection = id; save();
   page = 'lesson'; quiz = null; pushNav(); render(); scrollTo(0, 0);
-  if (showText) { const el = $('full-text'); if (el) { el.hidden = false; $('toggle-text').innerHTML = ic('book') + '閉じる'; } }
+  if (showText) { const el = $('full-text'); if (el) { el.hidden = true; $('toggle-text').click(); } }
 }
 
 // ---------- 節 ----------
@@ -453,19 +453,21 @@ function lesson() {
     <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>${tatoeHtml(s)}
     <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}4問</button></div>
     ${open ? '' : '<p class="note">' + ic('lock') + '前の節をクリアすると解けます</p>'}
-    <div id="full-text" class="lesson-text" hidden>${body}</div>
-    <div class="button-row"><button id="prev-section" class="button secondary">← 前</button><button id="next-section" class="button secondary">次 →</button></div>
+    <div id="full-text" class="lesson-text" hidden>${body}${open ? `<button id="text-quiz" class="button full">${ic('pencil')}問題を解く</button>` : ''}</div>
+    <div class="button-row" id="sec-nav"><button id="prev-section" class="button secondary">← 前</button><button id="next-section" class="button secondary">次 →</button></div>
   </div>`);
   $('toggle-text').onclick = () => {
     const el = $('full-text'); el.hidden = !el.hidden;
     if (!el.hidden && !has(state.read, s.id)) { state.read.push(s.id); save(); }
     $('toggle-text').innerHTML = ic('book') + (el.hidden ? '読む' : '閉じる');
+    $('sec-nav').hidden = open && !el.hidden;
   };
   document.querySelectorAll('.excard').forEach(c => {
     c.querySelector('[data-peek]').onclick = e => { e.target.remove(); c.querySelector('.exa').hidden = false; };
     c.querySelectorAll('[data-grade]').forEach(b => b.onclick = () => { const ok = b.dataset.grade === '1'; reward(c.dataset.ex, ok); b.parentNode.outerHTML = `<p class="exdone">${ok ? ic('check') + 'OK' : ic('loop') + '復習ボックスに入れました'}</p>`; });
   });
   $('stage-quiz').onclick = () => startQuiz(s.questions.map(q => ({ ...q, section: s })), 'stage', s.id);
+  if ($('text-quiz')) $('text-quiz').onclick = $('stage-quiz').onclick;
   const i = SECS.findIndex(a => a.id === s.id);
   $('prev-section').disabled = i === 0;
   $('prev-section').onclick = () => openLesson(SECS[i - 1].id);
@@ -549,16 +551,19 @@ function quizFinish() {
   }
   if (qz.mode === 'daily') { if (!state.dailyDone.includes(today())) state.dailyDone.push(today()); markStreakDay(); msg = `連続 ${streak()}日`; }
   save(); pushCloud(true);
+  const si = SECS.findIndex(a => a.id === qz.section), nextSec = qz.mode === 'stage' && pass ? SECS[si + 1] : null;
   quiz = null; page = 'finish'; try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
     : qz.mode === 'stage' ? (pass ? (msg.includes('ひらいた') ? 'せつ クリア！ つぎの せつが ひらいた！' : 'せつ クリア！') : 'あと すこし！ 3もん せいかいで クリア')
     : qz.mode === 'daily' ? `きょうの ぶん おわり！ れんぞく ${streak()}にち！` : 'ふくしゅう おわり！';
   main(`<h2 class="center">${modeLabel(qz.mode)}</h2><div class="score dot center">${qz.correctCount}<i>/${n}</i></div>
     <div class="rpg"><img class="pxi" id="finish-kiko" src="${KIKO.png.anim[pass ? 'dance' : 'awake'][0]}" alt=""><p id="rpg-msg"></p></div>
-    <div class="button-row"><button class="button" id="quiz-home">ホーム</button><button class="mini" id="quiz-map">マップ</button></div>`);
+    <div class="button-row">${nextSec ? `<button class="button" id="quiz-next">次の節へ →</button>` : qz.mode === 'stage' ? `<button class="button" id="quiz-retry">もう一度</button>` : '<button class="button" id="quiz-home">ホーム</button>'}<button class="mini" id="quiz-map">マップ</button></div>`);
   animate('finish-kiko', pass ? 'dance' : 'awake', 300);
   typeInto('rpg-msg', line);
-  $('quiz-home').onclick = () => setPage('home');
+  if ($('quiz-home')) $('quiz-home').onclick = () => setPage('home');
+  if ($('quiz-next')) $('quiz-next').onclick = () => openLesson(nextSec.id, true);
+  if ($('quiz-retry')) $('quiz-retry').onclick = () => { const sec = secBy(qz.section); startQuiz(sec.questions.map(q => ({ ...q, section: sec })), 'stage', sec.id); };
   $('quiz-map').onclick = () => setPage('map');
 }
 
