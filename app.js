@@ -35,7 +35,7 @@ const slash = s => s ? s.replace(/-/g, '/') : '—';
 const initial = () => ({
   version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
   crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {}, gradAwarded: {},
-  days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, exams: [], cards: {}, updatedAt: 0
+  days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, cards: {}, updatedAt: 0
 });
 const COUNTERS = ['crickets', 'specialFood', 'drillCorrect', 'drillCounter'];
 const DEV = (() => { let d = lsGet('kiko-qc-dev'); if (!d) { d = Math.random().toString(36).slice(2, 10); lsSet('kiko-qc-dev', d); } return d; })();
@@ -74,7 +74,8 @@ function mergeState(a, b) {
   for (const id of new Set([...Object.keys(a.history || {}), ...Object.keys(b.history || {})])) {
     const x = histBy((a.history || {})[id]), y = histBy((b.history || {})[id]), by = {};
     for (const h of [x, y]) if (h) for (const [d, v] of Object.entries(h.by)) { const t = by[d] || (by[d] = { a: 0, c: 0 }); t.a = Math.max(t.a, v.a || 0); t.c = Math.max(t.c, v.c || 0); }
-    m.history[id] = histSum({ by, last: [x?.last, y?.last].filter(Boolean).sort().pop(), at: Math.max(x?.at || 0, y?.at || 0) });
+    const lt = (y?.at || 0) > (x?.at || 0) ? y : x; // 最後に解いたときの正誤は、あとで解いたほうを使う
+    m.history[id] = histSum({ by, last: [x?.last, y?.last].filter(Boolean).sort().pop(), at: Math.max(x?.at || 0, y?.at || 0), ...(lt && lt.ok !== undefined ? { ok: lt.ok } : {}) });
   }
   m.review = {};
   for (const id of new Set([...Object.keys(a.review || {}), ...Object.keys(b.review || {})])) {
@@ -91,9 +92,7 @@ function mergeState(a, b) {
   m.dayCount = { ...(a.dayCount || {}) };
   for (const [d, n] of Object.entries(b.dayCount || {})) m.dayCount[d] = Math.max(m.dayCount[d] || 0, n);
   m.bestStreak = Math.max(a.bestStreak || 0, b.bestStreak || 0);
-  // 模擬試験の結果は id で合わせる。カードの「覚えた」は最後に押したほうを使う
-  const ex = new Map(); for (const e of [...(a.exams || []), ...(b.exams || [])]) if (e && e.id) ex.set(e.id, e);
-  m.exams = [...ex.values()].sort((x, y) => x.at - y.at).slice(-30);
+  // カードの「覚えた」は最後に押したほうを使う
   m.cards = { ...(a.cards || {}) };
   for (const [k, v] of Object.entries(b.cards || {})) if (!m.cards[k] || (v.at || 0) > (m.cards[k].at || 0)) m.cards[k] = v;
   // コオロギなどの数は端末ごとに持ち、合計を出す（2台で別々に進めても足し合わせになる）
@@ -138,7 +137,7 @@ async function pullCloud() {
       const changed = canon(merged) !== canon(state);
       state = merged;
       lsSet(STORE, JSON.stringify(state));
-      if (changed && !quiz && !['lesson', 'drill', 'finish', 'examrun', 'examres', 'qlist', 'cards'].includes(page)) render();
+      if (changed && !quiz && !['lesson', 'drill', 'finish', 'qlist', 'cards'].includes(page)) render();
       sync.status = 'synced'; sync.at = Date.now();
       if ((cloud.updatedAt || 0) < (state.updatedAt || 0) || changed || isDirty()) pushCloud();
     } else { sync.status = 'synced'; pushCloud(); }
@@ -162,7 +161,7 @@ async function pushCloud(win) {
       merged.updatedAt = Math.max(state.updatedAt || 0, cloud.updatedAt || 0);
       const changed = canon(merged) !== canon(state);
       state = merged; lsSet(STORE, JSON.stringify(state));
-      if (changed && !quiz && !['lesson', 'drill', 'finish', 'examrun', 'examres', 'qlist', 'cards'].includes(page)) render();
+      if (changed && !quiz && !['lesson', 'drill', 'finish', 'qlist', 'cards'].includes(page)) render();
     }
     const sent = JSON.stringify(state);
     const j = await api('qc_save', sent);
@@ -290,9 +289,9 @@ function todayPlan() {
 }
 
 // ---------- 答えの記録 ----------
-function reward(qid, correct, quiet) {
+function reward(qid, correct) {
   const h = histBy(state.history[qid]) || { by: {} }, mine = h.by[DEV] || (h.by[DEV] = { a: 0, c: 0 });
-  mine.a++; if (correct) mine.c++; h.last = today(); h.at = Date.now(); state.history[qid] = histSum(h);
+  mine.a++; if (correct) mine.c++; h.last = today(); h.at = Date.now(); h.ok = !!correct; state.history[qid] = histSum(h);
   const r = state.review[qid];
   if (correct) {
     const key = `${today()}:${qid}`;
@@ -303,7 +302,7 @@ function reward(qid, correct, quiet) {
       r.at = Date.now();
     }
   } else state.review[qid] = { step: 0, due: addDays(today(), 1), at: Date.now() };
-  totals(state); markActive(isEx(qid)); if (!quiet) save();
+  totals(state); markActive(isEx(qid)); save();
 }
 
 // ---------- 画面の状態 ----------
@@ -318,7 +317,6 @@ function typeInto(id, text) {
 }
 function main(html) {
   if (stopAnim) { stopAnim(); stopAnim = null; }
-  if (page !== 'examrun') examPause();
   clearInterval(typeTimer);
   $('app').innerHTML = html; chrome();
   document.querySelectorAll('#tabs button').forEach(el => el.classList.toggle('on', el.dataset.page === page));
@@ -348,7 +346,7 @@ const quizRisk = () => quiz && page === 'quiz' && (quiz.index > 0 || quiz.answer
 function leaveQuiz(go) {
   if (quiz && page === 'quiz' && quizLast()) { quizJudge(quiz); save(); pushCloud(true); quiz = null; return go(); }
   if (!quizRisk()) return go();
-  const what = { stage: '節クリアの判定', boss: 'ボス戦の判定', daily: '「今日はこれだけ」の記録', review: '復習の残り' }[quiz.mode] || '判定';
+  const what = { stage: '節クリアの判定', boss: 'ボス戦の判定', daily: '「今日はこれだけ」の記録', review: '復習の残り', custom: '残りの問題' }[quiz.mode] || '判定';
   modal('問題をやめますか？', `<p>${what}はやり直しになります</p><div class="button-row"><button class="button secondary" id="leave-stay">つづける</button><button class="button" id="leave-go">やめる</button></div>`);
   $('modal-close').hidden = true;
   $('leave-stay').onclick = () => closeModal();
@@ -358,7 +356,7 @@ window.addEventListener('popstate', e => {
   if (ignorePop) { ignorePop = false; return; }
   if (modalOpen()) { closeModal(true); return; } // 窓が開いていたら、最初の「戻る」は窓を閉じるだけ
   const st = e.state || { page: 'home' };
-  const to = () => { page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page === 'examres' ? 'exam' : st.page === 'examrun' && !examSession() ? 'exam' : st.page; sectionId = st.sectionId || sectionId;
+  const to = () => { page = st.page === 'quiz' || st.page === 'finish' ? 'home' : st.page; sectionId = st.sectionId || sectionId;
     quiz = null; if (page !== 'drill') drill = null; if (replaceNav) pushNav(); render(); scrollTo(0, 0); };
   if (quizRisk()) { pushNav(); return leaveQuiz(to); }
   leaveQuiz(to);
@@ -387,6 +385,7 @@ function home() {
   </section>
   <div class="duo"><button class="button big" id="start-text">${ic('book')}テキストを読む<small>${esc(nextSec ? nextSec.number + '. ' + nextSec.title : '')}</small></button><button class="button pop big" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ic('pencil')}今日はこれだけ<small>10問</small></button></div>
   <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
+  <button class="mini full" id="start-custom">${ic('pencil')}章と問題数をえらんで解く</button>
   <section class="panel strong">
     <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
     <p>優先：<b class="nb">${chapterLabel(ph.chapters)}</b>${plan.notCleared && ph.n < 4 ? `<span class="muted nb"> ／ 目安 1日${plan.perDay}節</span>` : ''}</p>
@@ -395,6 +394,7 @@ function home() {
   const img = $('home-kiko');
   if (img) stopAnim = sleeping ? KIKO.play(img, KIKO.png.tiny.sleep, 440, 0) : KIKO.play(img, KIKO.png.walkRight, 220, 0);
   $('start-daily').onclick = () => startQuiz(dailyQuestions(), 'daily');
+  $('start-custom').onclick = () => setPage('shiage');
   $('start-text').onclick = () => nextSec && openLesson(nextSec.id, true);
   if ($('resume')) $('resume').onclick = () => openLesson(state.lastSection);
 }
@@ -408,7 +408,7 @@ function nextStudySec() {
 const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`);
 function map() {
   const ph = phase();
-  let html = '<h2>' + ic('map') + 'マップ</h2><p class="muted imp-note">' + ic('star') + '＝出題の目安（3つが一番よく出る）</p>';
+  let html = '<h2>' + ic('map') + 'マップ</h2><p class="muted imp-note">' + ic('star') + '＝出題の目安（3つが一番よく出る）。ネットの無料講座が公式の出題範囲表をもとに付けた目安で、実際の出題数ではありません</p>';
   const cur = secBy(state.lastSection), curSt = cur ? stageOf(cur).id : STAGE_IDS[0];
   for (const st of STAGES) {
     const ch = { id: st.id }, secs = st.secs, done = secs.filter(s => has(state.cleared, s.id)).length;
@@ -515,7 +515,7 @@ function startBoss(id) {
   const pool = st.secs.flatMap(s => s.questions.map(q => ({ ...q, section: s })));
   startQuiz(shuffle(pool).slice(0, 10), 'boss', id);
 }
-const modeLabel = m => (ic({ boss: 'crown', daily: 'sun', review: 'loop', stage: 'pencil' }[m]) + { boss: 'ボス戦', daily: '今日はこれだけ', review: '復習', stage: '節の問題' }[m]);
+const modeLabel = m => (ic({ boss: 'crown', daily: 'sun', review: 'loop', stage: 'pencil', custom: 'star' }[m]) + { boss: 'ボス戦', daily: '今日はこれだけ', review: '復習', stage: '節の問題', custom: 'えらんで解く' }[m]);
 function quizView() {
   if (!quiz) return setPage('home');
   const q = quiz.questions[quiz.index]; if (!q) return quizFinish();
@@ -580,7 +580,7 @@ function quizFinish() {
   quiz = null; page = 'finish'; try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
     : qz.mode === 'stage' ? (pass ? (msg.includes('ひらいた') ? 'せつ クリア！ つぎの せつが ひらいた！' : 'せつ クリア！') : 'あと すこし！ 3もん せいかいで クリア')
-    : qz.mode === 'daily' ? `きょうの ぶん おわり！ れんぞく ${streak()}にち！` : 'ふくしゅう おわり！';
+    : qz.mode === 'daily' ? `きょうの ぶん おわり！ れんぞく ${streak()}にち！` : qz.mode === 'custom' ? `おつかれ！ ${qz.correctCount}もん せいかい！` : 'ふくしゅう おわり！';
   main(`<h2 class="center">${modeLabel(qz.mode)}</h2><div class="score dot center">${qz.correctCount}<i>/${n}</i></div>
     <div class="rpg"><img class="pxi" id="finish-kiko" src="${KIKO.png.anim[pass ? 'dance' : 'awake'][0]}" alt=""><p id="rpg-msg"></p></div>
     <div class="button-row">${nextSec ? `<button class="button" id="quiz-next">次の節へ →</button>` : qz.mode === 'stage' ? `<button class="button" id="quiz-retry">もう一度</button>` : '<button class="button" id="quiz-home">ホーム</button>'}<button class="mini" id="quiz-map">マップ</button></div>`);
@@ -875,140 +875,26 @@ const loginBox = () => `<a class="button full" href="${KH_LOGIN_PAGE}" >1. Googl
   <form id="code-form" class="code-form"><input class="input" id="code-in" placeholder="合言葉" autocomplete="off" autocapitalize="off"><button class="button">2. 入れる</button></form>`;
 function bindLogin() { const f = $('code-form'); if (!f) return; f.onsubmit = e => { e.preventDefault(); const v = $('code-in').value.trim(); if (!v) return; lsSet('kh-token', v); lsSet('qc-key', null); location.reload(); }; }
 
-// ---------- 仕上げ（模擬試験・実力メーター・答えの一覧・公式と用語のカード） ----------
+// ---------- 仕上げ（実力メーター・答えの一覧・公式と用語のカード） ----------
 // 出題の目安（★）：qc.wheelhouse.jp が公式レベル表をもとに分野ごとに付けた目安を、節に当てはめたもの
 const IMP_CH = { 2: 3, 3: 3, 4: 2, 5: 2, 6: 2, 7: 2, 8: 1 };
 const IMP_SEC = { '1-1': 3, '1-2': 3, '1-3': 2, '1-4': 2, '1-5': 2 };
 const impOf = s => s.chapter === 1 ? (IMP_SEC[s.id] || 1) : (IMP_CH[s.chapter] || 1);
 const stars = s => `<span class="stars">${ic('star').repeat(impOf(s))}</span>`;
-const mmss = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
 const pctS = v => (v[1] ? Math.round(v[0] / v[1] * 100) : 0) + '%';
 const meter = (label, a, b, line) => { const p = b ? a / b * 100 : 0; return `<div class="meter"><div class="meter-h"><b>${label}</b><span>${Math.round(p)}%<small>（${a}/${b}）</small></span></div><div class="meter-bar ${p >= line ? 'ok' : ''}"><div style="width:${p}%"></div><i style="left:${line}%"></i></div></div>`; };
-// 問題・選択肢・正解・解説をまとめて見せるカード（picked：模擬試験で選んだ答え。null は未回答）
-function qCard(q, no, picked) {
-  return `<div class="qcard"><p class="qcard-q"><b class="qno">問${no}</b>${esc(q.stem)}</p><div class="qcard-o">${q.options.map((o, i) => `<p class="${i === q.answer ? 'right' : i === picked ? 'miss' : ''}"><b>${KANA[i]}</b><span>${esc(o)}</span>${i === q.answer ? ic('check') : ''}</p>`).join('')}</div>${picked === null ? '<p class="muted">未回答</p>' : ''}<div class="explain">${q.drill ? stepsHtml(q.explanation) : `<p class="pre">${esc(q.explanation)}</p>`}</div></div>`;
+// 問題・選択肢・正解・解説をまとめて見せるカード
+function qCard(q, no) {
+  return `<div class="qcard"><p class="qcard-q"><b class="qno">問${no}</b>${esc(q.stem)}</p><div class="qcard-o">${q.options.map((o, i) => `<p class="${i === q.answer ? 'right' : ''}"><b>${KANA[i]}</b><span>${esc(o)}</span>${i === q.answer ? ic('check') : ''}</p>`).join('')}</div><div class="explain">${q.drill ? stepsHtml(q.explanation) : `<p class="pre">${esc(q.explanation)}</p>`}</div></div>`;
 }
 
-// ----- 模擬試験 -----
-// 途中の試験はこの端末にだけ保存する（閉じても続きから。時間は止まる）。結果は記録（state.exams）に入れて2台で共有
-const EXAM_KEY = 'kiko-qc-exam', EXAM_LAST = 'kiko-qc-exam-last';
-const EXAM_SIZES = { half: { n: 50, min: 45, drills: 5, name: 'ハーフ' }, full: { n: 100, min: 90, drills: 10, name: 'フル' } };
-const DRILL_CH = { stats: 2, transform: 2, hist: 3, normal: 5, binom: 5, xbar: 6, np: 6, p: 6, cp: 7, cpk: 7, oneside: 7, corr: 8 };
-const isMethod = ch => ch !== 1;
-let exam = null, examTimer = null, examTick = 0, examRes = null;
-function examSession() {
-  if (!exam) { try { const o = JSON.parse(lsGet(EXAM_KEY) || 'null'); if (o && Array.isArray(o.qs) && o.qs.length) exam = o; } catch (_) {} }
-  return exam;
-}
-const examStore = () => { if (exam) lsSet(EXAM_KEY, JSON.stringify(exam)); };
-function examPause() {
-  if (examTimer) { clearInterval(examTimer); examTimer = null; }
-  if (exam && examTick) { exam.used += Date.now() - examTick; examTick = 0; examStore(); }
-}
-function examNew(kind) {
-  const cfg = EXAM_SIZES[kind], half = cfg.n / 2, idx = id => SECS.findIndex(s => s.id === id);
-  const lastOf = ch => SECS.reduce((a, s, i) => s.chapter === ch ? i : a, 0);
-  const pool = f => shuffle(SECS.filter(f).flatMap(s => s.questions.map(q => ({ ...shuffleChoices(q), sid: s.id, ch: s.chapter, k: idx(s.id) }))));
-  const types = shuffle(DRILLS.map(d => d[0]));
-  const drills = Array.from({ length: cfg.drills }, (_, i) => { const t = types[i % types.length]; return { ...makeDrill(t), id: 'drill', drill: true, ch: DRILL_CH[t], sid: null, k: lastOf(DRILL_CH[t]) + 0.5 }; });
-  const met = pool(s => s.chapter !== 1).slice(0, half - cfg.drills).concat(drills).sort((a, b) => a.k - b.k);
-  const pra = pool(s => s.chapter === 1).slice(0, half).sort((a, b) => a.k - b.k);
-  exam = { id: Date.now().toString(36) + DEV, kind, n: cfg.n, limit: cfg.min * 60000, used: 0, qs: met.concat(pra), ans: Array(cfg.n).fill(null), flag: [], idx: 0, gridOpen: false };
-  examStore();
-}
-function examStartTimer() {
-  if (examTimer || !exam) return;
-  examTick = Date.now(); let k = 0;
-  examTimer = setInterval(() => {
-    if (!exam || page !== 'examrun') return examPause();
-    const now = Date.now(); exam.used += now - examTick; examTick = now;
-    const left = exam.limit - exam.used, el = $('ex-timer');
-    if (el) { el.textContent = mmss(left); el.classList.toggle('warn', left < 5 * 60000); }
-    if (left <= 0) return examSubmit(true);
-    if (++k % 5 === 0) examStore();
-  }, 1000);
-}
-function examRun() {
-  const e = examSession(); if (!e) return setPage('exam');
-  const q = e.qs[e.idx], done = e.ans.filter(x => x !== null).length, left = e.limit - e.used;
-  main(`<div class="section-top"><div><div class="label">${ic('clock')}模擬試験（${EXAM_SIZES[e.kind].name}）</div><h2>問${e.idx + 1}<small class="muted">／${e.n}　${isMethod(q.ch) ? '手法' : '実践'}</small></h2></div><span class="pill timer ${left < 5 * 60000 ? 'warn' : ''}" id="ex-timer">${mmss(left)}</span></div>
-  <div class="progress"><div id="ex-prog" style="width:${done / e.n * 100}%"></div></div>
-  <div class="question-card"><h3>${esc(q.stem)}</h3>
-    <div class="choices">${q.options.map((o, i) => `<button class="choice ${e.ans[e.idx] === i ? 'picked' : ''}" data-ea="${i}"><b>${KANA[i]}</b>${esc(o)}</button>`).join('')}</div>
-    <div class="ex-nav"><button class="button secondary" id="ex-prev" ${e.idx === 0 ? 'disabled' : ''}>← 前</button><button class="button secondary ${e.flag.includes(e.idx) ? 'on' : ''}" id="ex-flag">${ic('flag')}見直す</button><button class="button" id="ex-next">${e.idx === e.n - 1 ? '一覧へ' : '次 →'}</button></div>
-  </div>
-  <div class="button-row"><button class="button secondary small" id="ex-ntable">${ic('bar')}正規分布表</button><button class="button secondary small" id="calc-toggle">${ic('calc')}電卓</button></div><div id="calc-slot"></div>
-  <details class="panel exgrid-wrap" id="ex-grid" ${e.gridOpen ? 'open' : ''}><summary>${ic('books')}問題一覧（答えた <span id="ex-done">${done}</span>/${e.n}）</summary>
-    <p class="muted">${ic('flag')}＝見直す印</p><div class="exgrid">${e.qs.map((_, i) => `<button class="${e.ans[i] !== null ? 'done' : ''} ${e.flag.includes(i) ? 'flag' : ''} ${i === e.idx ? 'cur' : ''}" data-go="${i}">${i + 1}</button>`).join('')}</div></details>
-  <button class="button gold full" id="ex-submit">提出する</button>
-  <p class="muted center">途中でやめても、続きから再開できます（その間は時間が止まります）</p>`);
-  const go = i => { e.idx = i; examStore(); render(); scrollTo(0, 0); };
-  document.querySelectorAll('[data-ea]').forEach(b => b.onclick = () => {
-    e.ans[e.idx] = +b.dataset.ea; examStore();
-    document.querySelectorAll('[data-ea]').forEach(x => x.classList.toggle('picked', x === b));
-    const g = document.querySelector(`[data-go="${e.idx}"]`); if (g) g.classList.add('done');
-    const n = e.ans.filter(x => x !== null).length; $('ex-done').textContent = n; $('ex-prog').style.width = n / e.n * 100 + '%';
-  });
-  $('ex-prev').onclick = () => go(e.idx - 1);
-  $('ex-next').onclick = () => { if (e.idx < e.n - 1) return go(e.idx + 1); e.gridOpen = true; examStore(); render(); $('ex-grid').scrollIntoView({ block: 'start' }); };
-  $('ex-flag').onclick = () => { e.flag = e.flag.includes(e.idx) ? e.flag.filter(x => x !== e.idx) : [...e.flag, e.idx]; examStore(); $('ex-flag').classList.toggle('on'); const g = document.querySelector(`[data-go="${e.idx}"]`); if (g) g.classList.toggle('flag'); };
-  document.querySelectorAll('[data-go]').forEach(b => b.onclick = () => go(+b.dataset.go));
-  $('ex-grid').ontoggle = () => { e.gridOpen = $('ex-grid').open; examStore(); };
-  $('ex-ntable').onclick = () => modal(ic('bar') + '正規分布表', normalTable());
-  $('calc-toggle').onclick = () => toggleCalc('calc-slot');
-  $('ex-submit').onclick = () => {
-    const blank = e.ans.filter(x => x === null).length, fl = e.flag.length;
-    modal('提出しますか？', `<p>${blank ? `未回答 ${blank}問` : '全部答えました'}${fl ? ` ／ 見直す印 ${fl}問` : ''}</p><div class="button-row"><button class="button secondary" id="sub-no">もどる</button><button class="button" id="sub-yes">提出する</button></div>`);
-    $('sub-no').onclick = () => closeModal();
-    $('sub-yes').onclick = () => { closeModal(); examSubmit(false); };
-  };
-  examStartTimer();
-}
-function examSubmit(timeUp) {
-  const e = examSession(); if (!e) return;
-  examPause();
-  const r = { id: e.id, at: Date.now(), kind: e.kind, n: e.n, used: Math.min(e.used, e.limit), timeUp: !!timeUp, met: [0, 0], pra: [0, 0], ch: {} };
-  const wrong = [];
-  e.qs.forEach((q, i) => {
-    const a = e.ans[i], ok = a === q.answer, m = isMethod(q.ch) ? r.met : r.pra, c = r.ch[q.ch] || (r.ch[q.ch] = [0, 0]);
-    m[1]++; c[1]++; if (ok) { m[0]++; c[0]++; } else wrong.push(i);
-    if (a === null) return; // 未回答は記録しない
-    if (q.drill) { if (ok) { bump('drillCorrect'); bump('drillCounter'); if (state.drillCounter % 2 === 0) bump('crickets'); } markActive(); }
-    else reward(q.id, ok, true);
-  });
-  const tot = r.met[0] + r.pra[0];
-  r.pass = tot * 100 >= r.n * 70 && r.met[0] * 100 >= r.met[1] * 50 && r.pra[0] * 100 >= r.pra[1] * 50;
-  state.exams = [...(state.exams || []), r].slice(-30);
-  save(); pushCloud(true);
-  examRes = { r, qs: e.qs, ans: e.ans, wrong };
-  lsSet(EXAM_LAST, JSON.stringify(examRes)); lsSet(EXAM_KEY, null); exam = null;
-  page = 'examres'; try { history.replaceState({ page: 'exam' }, ''); } catch (_) {}
-  scrollTo(0, 0); render();
-  if (timeUp) modal('時間切れ', `<p>${EXAM_SIZES[r.kind].min}分たったので提出しました</p>`);
-}
-function examResult() {
-  if (!examRes) { try { examRes = JSON.parse(lsGet(EXAM_LAST) || 'null'); } catch (_) {} }
-  if (!examRes) return setPage('exam');
-  const { r, qs, ans, wrong } = examRes, tot = r.met[0] + r.pra[0];
-  main(`<h2 class="center">${ic('clock')}模擬試験の結果</h2>
-  <div class="rpg"><img class="pxi" id="finish-kiko" src="${KIKO.png.anim[r.pass ? 'dance' : 'awake'][0]}" alt=""><p id="rpg-msg"></p></div>
-  <div class="panel">${meter('総合（70%以上）', tot, r.n, 70)}${meter('手法（50%以上）', r.met[0], r.met[1], 50)}${meter('実践（50%以上）', r.pra[0], r.pra[1], 50)}
-    <p class="muted">かかった時間 ${mmss(r.used)}${r.timeUp ? '（時間切れ）' : ''}</p></div>
-  <div class="panel"><h3>章ごと</h3>${Object.keys(r.ch).sort((a, b) => a - b).map(c => `<div class="chrow"><span>第${c}章 ${esc(chTitle(+c))}</span><b>${r.ch[c][0]}/${r.ch[c][1]}</b></div>`).join('')}</div>
-  <details class="panel"><summary>まちがえた問題（${wrong.length}問）</summary><p class="muted">答えてまちがえた問題は、復習ボックスに入りました</p>${wrong.map(i => qCard(qs[i], i + 1, ans[i])).join('') || '<p class="empty">全問正解！</p>'}</details>
-  <button class="button full" id="ex-hub">仕上げへ</button>`);
-  animate('finish-kiko', r.pass ? 'dance' : 'awake', 300);
-  typeInto('rpg-msg', r.pass ? `ごうかく ライン クリア！ ${tot}/${r.n}もん！` : `あと すこし！ ${tot}/${r.n}もん`);
-  $('ex-hub').onclick = () => setPage('exam');
-}
-
-// ----- 実力メーター：いま解ける問題の割合（未回答と、復習ボックスで卒業していない問題は「解けない」） -----
+// ----- 実力メーター：いま解ける問題の割合（最後に解いたとき正解で、復習ボックスで待っていない問題を「解ける」とする） -----
 function skill() {
   const r = { all: [0, 0], met: [0, 0], pra: [0, 0], ch: {} };
   for (const c of CHAPS) r.ch[c.id] = [0, 0];
   for (const s of SECS) for (const q of s.questions) {
     const h = state.history[q.id], rv = state.review[q.id];
-    const ok = h && h.correct > 0 && !(rv && rv.step < 3) ? 1 : 0;
+    const ok = h && (h.ok !== undefined ? h.ok : h.correct > 0) && !(rv && rv.step < 3) ? 1 : 0;
     for (const t of [r.all, s.chapter === 1 ? r.pra : r.met, r.ch[s.chapter]]) { t[0] += ok; t[1]++; }
   }
   const need = (v, p) => Math.max(0, Math.ceil(v[1] * p / 100) - v[0]);
@@ -1018,38 +904,50 @@ function skill() {
 }
 
 // ----- 仕上げの画面 -----
-function examHub() {
-  const e = examSession(), sk = skill(), last = (state.exams || []).slice(-5).reverse();
-  main(`<h2>${ic('clock')}仕上げ</h2>
-  <div class="panel strong"><h3>${ic('clock')}模擬試験</h3>
-    ${e ? `<p>途中の試験があります（${EXAM_SIZES[e.kind].name}・答えた ${e.ans.filter(x => x !== null).length}/${e.n}・残り ${mmss(e.limit - e.used)}）</p><div class="button-row"><button class="button" id="ex-resume">${ic('play')}つづける</button><button class="mini" id="ex-quit">やめる</button></div>`
-      : `<p class="muted">解いている間は答えを見せません。総合70%以上、かつ手法・実践それぞれ50%以上で合格ライン</p><div class="duo"><button class="button big" data-exam="half">ハーフ<small>50問・45分</small></button><button class="button pop big" data-exam="full">フル<small>100問・90分</small></button></div>`}
-    ${last.length ? `<div class="exlog">${last.map(r => `<div class="chrow"><span>${slash(iso(new Date(r.at))).slice(5)} ${EXAM_SIZES[r.kind]?.name || ''}</span><span>${pctS([r.met[0] + r.pra[0], r.n])}<small class="muted">（手法${pctS(r.met)}・実践${pctS(r.pra)}）</small></span><b>${r.pass ? ic('check') : '—'}</b></div>`).join('')}</div>${examLastOk() ? '<button class="mini full" id="ex-last">前回の結果を見る</button>' : ''}` : ''}
+function finishHub() {
+  const sk = skill();
+  const cs = customSet(), pool = customPool(cs);
+  main(`<h2>${ic('star')}仕上げ</h2>
+  <div class="panel strong" id="custom"><h3>${ic('pencil')}えらんで解く</h3>
+    <p class="muted">章（いくつでも）</p><div class="drill-types"><button class="chip ${cs.chs.length ? '' : 'on'}" data-cch="all">全章</button>${CHAPS.map(c => `<button class="chip ${cs.chs.includes(c.id) ? 'on' : ''}" data-cch="${c.id}">${c.id}章</button>`).join('')}</div>
+    <p class="muted">${esc(cs.chs.length ? cs.chs.map(c => chTitle(c)).join('・') : '全部の章')}（${pool.length}問）</p>
+    <p class="muted">問題数</p><div class="seg">${[10, 20, 30, 50].map(n => `<button class="${cs.n === n ? 'on' : ''}" data-cn="${n}">${n}</button>`).join('')}</div>
+    <p class="muted">出し方</p><div class="seg"><button class="${cs.order === 'weak' ? 'on' : ''}" data-cord="weak">苦手から</button><button class="${cs.order === 'random' ? 'on' : ''}" data-cord="random">ランダム</button></div>
+    <p class="muted">${cs.order === 'weak' ? '前にまちがえた問題 → 復習ボックスの問題 → まだ解いていない問題 → 正解した問題 の順' : '選んだ章からランダム'}</p>
+    <button class="button full" id="custom-go" ${pool.length ? '' : 'disabled'}>${ic('play')}${Math.min(cs.n, pool.length)}問 解く</button>
   </div>
-  <div class="panel"><h3>${ic('bar')}実力メーター</h3><p class="muted">いま解ける問題の割合。まだ解いていない問題と、復習ボックスにある問題は「解けない」に数えます</p>
+  <div class="panel"><h3>${ic('bar')}実力メーター</h3><p class="muted">いま解ける問題の割合。最後に解いたとき正解で、復習ボックスにも入っていない問題を「解ける」に数えます（まだ解いていない問題は「解けない」）</p>
     ${meter('総合（70%）', sk.all[0], sk.all[1], 70)}${meter('手法（50%）', sk.met[0], sk.met[1], 50)}${meter('実践（50%）', sk.pra[0], sk.pra[1], 50)}
     <p><b>${esc(sk.msg)}</b></p>
     <details class="chd"><summary>章ごとに見る</summary>${CHAPS.map(c => { const v = sk.ch[c.id]; return `<div class="chrow"><span>第${c.id}章 ${esc(c.title)}</span><span class="muted">${v[0]}/${v[1]}</span><b>${pctS(v)}</b></div>`; }).join('')}</details>
   </div>
   <div class="panel"><h3>${ic('books')}答えと解説の一覧</h3><select class="input" id="ql-sel">${SECS.map(s => `<option value="${s.id}" ${s.id === (sectionId || state.lastSection) ? 'selected' : ''}>${s.chapter}-${s.number} ${esc(s.title)}</option>`).join('')}</select><button class="button secondary full" id="ql-go" style="margin-top:8px">開く</button></div>
   <div class="panel"><h3>${ic('cards')}公式・用語カード</h3><p class="muted">覚えた　公式 ${cardOk(formulaCards())}/${FORMULAS.length}　用語 ${cardOk(termCards())}/${termCards().length}</p><div class="duo"><button class="button big" data-cards="f">公式<small>${FORMULAS.length}枚</small></button><button class="button big" data-cards="t">用語<small>${termCards().length}枚</small></button></div></div>`);
-  document.querySelectorAll('[data-exam]').forEach(b => b.onclick = () => { examNew(b.dataset.exam); page = 'examrun'; pushNav(); scrollTo(0, 0); render(); });
-  if ($('ex-resume')) $('ex-resume').onclick = () => { page = 'examrun'; pushNav(); scrollTo(0, 0); render(); };
-  if ($('ex-quit')) $('ex-quit').onclick = () => {
-    modal('途中の試験をやめますか？', `<p>答えた分は記録されません</p><div class="button-row"><button class="button secondary" id="q-no">もどる</button><button class="button" id="q-yes">やめる</button></div>`);
-    $('q-no').onclick = () => closeModal();
-    $('q-yes').onclick = () => { closeModal(); exam = null; lsSet(EXAM_KEY, null); render(); };
-  };
-  if ($('ex-last')) $('ex-last').onclick = () => { examRes = null; page = 'examres'; pushNav(); scrollTo(0, 0); render(); };
   $('ql-go').onclick = () => openList($('ql-sel').value);
+  const keep = () => { lsSet('qc-custom', JSON.stringify(cs)); const y = scrollY; render(); scrollTo(0, y); };
+  document.querySelectorAll('[data-cch]').forEach(b => b.onclick = () => { const v = b.dataset.cch; cs.chs = v === 'all' ? [] : cs.chs.includes(+v) ? cs.chs.filter(x => x !== +v) : [...cs.chs, +v].sort(); keep(); });
+  document.querySelectorAll('[data-cn]').forEach(b => b.onclick = () => { cs.n = +b.dataset.cn; keep(); });
+  document.querySelectorAll('[data-cord]').forEach(b => b.onclick = () => { cs.order = b.dataset.cord; keep(); });
+  $('custom-go').onclick = () => startQuiz(customPool(cs, true).slice(0, cs.n), 'custom');
   document.querySelectorAll('[data-cards]').forEach(b => b.onclick = () => openCards(b.dataset.cards));
 }
-const examLastOk = () => !!lsGet(EXAM_LAST);
+// ----- えらんで解く：章・問題数・出し方を選ぶ（選んだ内容はこの端末に覚えておく） -----
+function customSet() {
+  let o = null; try { o = JSON.parse(lsGet('qc-custom') || 'null'); } catch (_) {}
+  return { chs: Array.isArray(o?.chs) ? o.chs.filter(c => CHAPS.some(x => x.id === c)) : [], n: [10, 20, 30, 50].includes(o?.n) ? o.n : 10, order: o?.order === 'random' ? 'random' : 'weak' };
+}
+function customPool(cs, ordered) {
+  const list = SECS.filter(s => !cs.chs.length || cs.chs.includes(s.chapter)).flatMap(s => s.questions.map(q => ({ ...q, section: s })));
+  if (!ordered) return list;
+  const rank = q => { const h = state.history[q.id], rv = state.review[q.id]; if (!h) return 2; if (h.ok === false || (h.ok === undefined && !h.correct)) return 0; if (rv && rv.step < 3) return 1; return 3; };
+  const mixed = shuffle(list);
+  return cs.order === 'weak' ? mixed.sort((a, b) => rank(a) - rank(b)) : mixed;
+}
 
 // ----- 答えと解説の一覧 -----
 function openList(id) { sectionId = id; page = 'qlist'; pushNav(); scrollTo(0, 0); render(); }
 function qlist() {
-  const s = secBy(sectionId); if (!s) return setPage('exam');
+  const s = secBy(sectionId); if (!s) return setPage('shiage');
   const i = SECS.indexOf(s);
   main(`<div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
   <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2><span class="pill">${s.questions.length}問</span></div>
@@ -1105,24 +1003,24 @@ const cardOk = list => list.filter(c => state.cards?.[c.id]?.ok).length;
 let deck = null;
 function openCards(kind) {
   const all = kind === 'f' ? formulaCards() : termCards(), notOk = all.filter(c => !state.cards?.[c.id]?.ok);
-  deck = { kind, list: shuffle(notOk.length ? notOk : all), i: 0, flip: false, all: all.length, again: !notOk.length };
+  const miss = c => state.cards?.[c.id]?.miss || 0; // 「まだ」を押した回数が多いカードから出す
+  deck = { kind, list: shuffle(notOk.length ? notOk : all).sort((a, b) => miss(b) - miss(a)), i: 0, flip: false, all: all.length, again: !notOk.length };
   page = 'cards'; pushNav(); scrollTo(0, 0); render();
 }
 function cardsView() {
-  if (!deck) return setPage('exam');
+  if (!deck) return setPage('shiage');
   const name = deck.kind === 'f' ? '公式' : '用語', c = deck.list[deck.i], okN = cardOk(deck.kind === 'f' ? formulaCards() : termCards());
   if (!c) {
     main(`<h2>${ic('cards')}${name}カード</h2><div class="rpg"><p>${deck.list.length}まい おわり！ おぼえた ${okN}/${deck.all}</p></div><div class="button-row"><button class="button" id="cd-again">もう一度</button><button class="mini" id="cd-back">仕上げへ</button></div>`);
-    $('cd-again').onclick = () => openCards(deck.kind); $('cd-back').onclick = () => setPage('exam'); return;
+    $('cd-again').onclick = () => openCards(deck.kind); $('cd-back').onclick = () => setPage('shiage'); return;
   }
   main(`<div class="section-top"><h2>${ic('cards')}${name}カード</h2><span class="pill">${deck.i + 1}/${deck.list.length}</span></div>
   <p class="muted">覚えた ${okN}/${deck.all}　${deck.again ? '全部覚えたので、全部から出しています' : 'まだのカードだけ出しています'}</p>
-  <button class="flash ${deck.flip ? 'flip' : ''}" id="cd-card"><span class="flash-f">${esc(c.front)}</span>${deck.flip ? `<span class="flash-b">${esc(c.back)}</span>${c.note ? `<small>${esc(c.note)}</small>` : ''}${c.src ? `<small>${c.src.chapter}-${c.src.number} ${esc(c.src.title)}</small>` : ''}` : `<small>タップで${deck.kind === 'f' ? '式' : '説明'}を見る</small>`}</button>
+  <button class="flash ${deck.flip ? 'flip' : ''}" id="cd-card">${state.cards?.[c.id]?.miss ? `<small class="miss-n">${ic('loop')}まだ ${state.cards[c.id].miss}回</small>` : ''}<span class="flash-f">${esc(c.front)}</span>${deck.flip ? `<span class="flash-b">${esc(c.back)}</span>${c.note ? `<small>${esc(c.note)}</small>` : ''}${c.src ? `<small>${c.src.chapter}-${c.src.number} ${esc(c.src.title)}</small>` : ''}` : `<small>タップで${deck.kind === 'f' ? '式' : '説明'}を見る</small>`}</button>
   ${deck.flip ? `<div class="button-row"><button class="button secondary" data-know="0">${ic('loop')}まだ</button><button class="button" data-know="1">${ic('check')}覚えた</button></div>` : ''}`);
   $('cd-card').onclick = () => { deck.flip = !deck.flip; render(); };
-  document.querySelectorAll('[data-know]').forEach(b => b.onclick = () => { state.cards = state.cards || {}; state.cards[c.id] = { ok: b.dataset.know === '1', at: Date.now() }; save(); deck.i++; deck.flip = false; render(); scrollTo(0, 0); });
+  document.querySelectorAll('[data-know]').forEach(b => b.onclick = () => { state.cards = state.cards || {}; const ok = b.dataset.know === '1', pm = state.cards[c.id]?.miss || 0; state.cards[c.id] = { ok, at: Date.now(), miss: pm + (ok ? 0 : 1) }; save(); deck.i++; deck.flip = false; render(); scrollTo(0, 0); });
 }
-document.addEventListener('visibilitychange', () => { if (page !== 'examrun') return; if (document.visibilityState === 'hidden') examPause(); else render(); });
 
 // ---------- 共通 ----------
 const modalOpen = () => !$('modal-overlay').classList.contains('hidden');
@@ -1137,7 +1035,7 @@ function closeModal(fromPop) {
   if (!fromPop && history.state && history.state.modal) { ignorePop = true; history.back(); }
 }
 function render() {
-  ({ home, map, lesson, quiz: quizView, review, drill: drillView, room, settings, exam: examHub, examrun: examRun, examres: examResult, qlist, cards: cardsView }[page] || (() => {}))();
+  ({ home, map, lesson, quiz: quizView, review, drill: drillView, room, settings, shiage: finishHub, qlist, cards: cardsView }[page] || (() => {}))();
 }
 
 // ---------- 中身の読み込み（暗号化された content.bin にも対応） ----------
