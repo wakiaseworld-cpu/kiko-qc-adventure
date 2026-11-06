@@ -256,3 +256,5 @@ details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
 .flash .miss-n{display:flex;align-items:center;gap:4px;color:var(--bad)}
 .lvnote{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;font-size:.8rem;margin:2px 0 6px}.lvnote .ic{width:14px;height:14px}
 a.mini{display:flex;justify-content:center;align-items:center;gap:4px;text-decoration:none;margin-top:8px;box-sizing:border-box}
+#ptr{position:fixed;top:8px;left:50%;z-index:200;background:var(--surface);color:var(--ink);border:1px solid var(--ink);border-radius:999px;padding:6px 14px;font-size:.85rem;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
+#ptr.ready{background:var(--ink);color:var(--ink-fg)}

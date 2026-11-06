@@ -1123,5 +1123,25 @@ async function boot() {
   window.addEventListener('pagehide', flushNow);
   window.addEventListener('online', () => { if (sync.ok) pushCloud(); else pullCloud(); });
 }
+// ---------- 下に引っぱって更新（画面の一番上で下へ引いて離すと読み込み直す。問題を解いている途中と窓が開いているときはしない） ----------
+(() => {
+  const NEED = 90; let y0 = null, dy = 0, bar = null;
+  const hide = () => { if (bar) { bar.remove(); bar = null; } };
+  const show = () => {
+    if (!bar) { bar = document.createElement('div'); bar.id = 'ptr'; document.body.appendChild(bar); }
+    const r = Math.min(dy, 140); bar.style.transform = `translate(-50%, ${Math.round(r * 0.6)}px)`;
+    bar.classList.toggle('ready', r >= NEED); bar.textContent = r >= NEED ? '離すと更新' : '↓ 引っぱって更新';
+  };
+  addEventListener('touchstart', e => { y0 = scrollY <= 0 && e.touches.length === 1 && page !== 'quiz' && !modalOpen() ? e.touches[0].clientY : null; dy = 0; }, { passive: true });
+  addEventListener('touchmove', e => { if (y0 === null) return; dy = e.touches[0].clientY - y0; if (dy > 12 && scrollY <= 0) show(); else hide(); }, { passive: true });
+  addEventListener('touchend', () => {
+    if (y0 !== null && dy >= NEED && scrollY <= 0) {
+      if (bar) bar.textContent = '更新中…';
+      try { lsSet(STORE, JSON.stringify(state)); flushNow(); } catch (_) {} // 未送信の記録は端末に残したまま、送れるものは送ってから読み込み直す
+      setTimeout(() => location.reload(), 300);
+    } else hide();
+    y0 = null; dy = 0;
+  }, { passive: true });
+})();
 boot();
 })();
