@@ -462,10 +462,10 @@ function lesson() {
   const parts = splitText(s), exs = examplesOf(s);
   const body = hd(parts.before) + (exs.length ? '<h4 class="tab"><span>例題</span></h4>' + exs.map(e => `<div class="excard" data-ex="${e.id}"><div class="exq"><b class="qno">例${e.n}</b><p>${fmtText(esc(e.stem), 1)}</p></div><button class="mini full" data-peek>答えを見る</button><div class="exa" hidden><p><b class="ans-h">答え</b>${fmtText(esc(e.ans), 1)}</p><div class="button-row"><button class="button secondary" data-grade="1">わかった</button><button class="button" data-grade="0">まちがえた</button></div></div></div>`).join('') : hd(parts.ex)) + hd(parts.after);
   main(`<div class="reading">
-    <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}</div>
+    <div class="label">第${s.chapter}章 ${esc(chTitle(s.chapter))}${s.page ? `<span class="bookpg">${ic('books')}本 p.${s.page}</span>` : ''}</div>
     <div class="section-top"><h2>${s.number}. ${esc(s.title)}</h2>${has(state.cleared, s.id) ? '<span class="pill gold">' + ic('check') + '</span>' : ''}</div>
     <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>${tatoeHtml(s)}
-    <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}4問</button></div>
+    <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}${s.questions.length}問</button></div>
     ${open ? '' : '<p class="note">' + ic('lock') + '前の節をクリアすると解けます</p>'}
     <div id="full-text" class="lesson-text" hidden>${body}${open ? `<button id="text-quiz" class="button full">${ic('pencil')}問題を解く</button>` : ''}</div>
     <div class="button-row" id="sec-nav"><button id="prev-section" class="button secondary">← 前</button><button id="next-section" class="button secondary">次 →</button></div>
@@ -846,7 +846,7 @@ function settings() {
     ${['nologin', 'expired'].includes(sync.status) ? loginBox() : `<div class="button-row"><button class="button secondary" id="sync-now">今すぐ同期</button><button class="button secondary" id="copy-token">合言葉をコピー</button></div>`}</div>
   <div class="panel"><h3>${ic('bar')}記録</h3>
     <p>節クリア ${state.cleared.length}/36 ／ ボス ${state.boss.length}/${STAGE_IDS.length}</p>
-    <p>解いた問題 ${Object.keys(state.history).filter(id => !isEx(id)).length}/144 ／ 計算 ${state.drillCorrect}問</p>
+    <p>解いた問題 ${Object.keys(state.history).filter(id => !isEx(id)).length}/${SECS.reduce((a, s) => a + s.questions.length, 0)} ／ 計算 ${state.drillCorrect}問</p>
     <p>勉強した日 ${state.active.length}日 ／ 最高連続 ${state.bestStreak}日</p></div>
   <div class="panel"><h3>${ic('disk')}バックアップ</h3><div class="button-row"><button id="backup-export" class="button secondary">書き出す</button><button id="backup-import" class="button secondary">読み込む</button></div><input type="file" accept="application/json,.json" id="backup-file" hidden></div>`);
   $('exam-save').onclick = () => { const v = $('exam-input').value; if (!v) return; state.exam = v; save(); pushCloud(true); modal('保存しました', `試験日：${esc(slash(v))}<br>残り ${dayDelta(v, today())}日`); };
