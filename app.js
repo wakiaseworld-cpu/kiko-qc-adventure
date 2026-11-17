@@ -35,7 +35,7 @@ const slash = s => s ? s.replace(/-/g, '/') : '—';
 const initial = () => ({
   version: 2, exam: DEFAULT_EXAM, cleared: [], read: [], boss: [], history: {}, review: {},
   crickets: 0, specialFood: 0, drillCorrect: 0, drillCounter: 0, practiceAwarded: {}, gradAwarded: {},
-  days: [], active: [], dayCount: {}, dailyDone: [], cnt: {}, bestStreak: 0, lastSection: null, cards: {}, updatedAt: 0
+  days: [], active: [], dayCount: {}, dailyDone: [], clearLog: {}, cnt: {}, bestStreak: 0, lastSection: null, cards: {}, updatedAt: 0
 });
 const FOOD_VALUE = 10; // 特別なエサ1つ＝コオロギ10匹分
 const foodLeft = () => Math.max(0, (state.specialFood || 0) - (state.fed || 0));
@@ -94,6 +94,8 @@ function mergeState(a, b) {
   m.dayCount = { ...(a.dayCount || {}) };
   for (const [d, n] of Object.entries(b.dayCount || {})) m.dayCount[d] = Math.max(m.dayCount[d] || 0, n);
   m.bestStreak = Math.max(a.bestStreak || 0, b.bestStreak || 0);
+  m.clearLog = {}; // その日にクリアした節は、両方を足し合わせる
+  for (const src of [a, b]) for (const [d, ids] of Object.entries(src.clearLog || {})) m.clearLog[d] = uniq([...(m.clearLog[d] || []), ...ids]);
   // カードの「覚えた」は最後に押したほうを使う
   // 「まだ」の回数は端末ごとに持って足し合わせる（by）
   m.cards = {};
@@ -246,11 +248,11 @@ const chBossDone = c => STAGES.filter(st => st.chapter === c).every(st => has(st
 const chTitle = id => CHAPS.find(c => c.id === id)?.title || '';
 function level() { let l = 1, t = 0, step = 20; while (t + step <= state.crickets) { t += step; l++; step += 10; } return { level: l, base: t, next: t + step }; }
 function streak() { let n = 0, d = today(); if (!state.days.includes(d)) d = addDays(d, -1); while (state.days.includes(d)) { n++; d = addDays(d, -1); } return n; }
-function markActive(noCount) { // 1問解くごとに呼ぶ。その日に10問解いたら連続日数に数える（例題は数えない）
+function markActive(noCount) { // 1問解くごとに呼ぶ。その日に3問解いたら連続日数に数える（例題は数えない）
   const t = today(); if (!state.active.includes(t)) state.active.push(t);
   if (noCount) return;
   state.dayCount[t] = (state.dayCount[t] || 0) + 1;
-  if (state.dayCount[t] >= 10) markStreakDay();
+  if (state.dayCount[t] >= 3) markStreakDay();
 }
 function markStreakDay() {
   if (!state.days.includes(today())) { state.days.push(today()); state.days.sort(); }
@@ -291,8 +293,9 @@ function dailyQuestions() {
 }
 function todayPlan() {
   const left = dayDelta(state.exam, today()), notCleared = SECS.filter(s => !has(state.cleared, s.id)).length;
-  const studyDays = Math.max(1, left - 14);
-  return { left, perDay: notCleared ? Math.ceil(notCleared / studyDays) : 0, notCleared };
+  const doneToday = (state.clearLog[today()] || []).length, atStart = notCleared + doneToday;
+  const studyDays = left > 14 ? left - 14 : Math.max(1, left + 1); // 直前期に残っていたら、試験の日までにならす
+  return { left, perDay: atStart ? Math.ceil(atStart / studyDays) : 0, notCleared, doneToday };
 }
 
 // ---------- 答えの記録 ----------
@@ -353,7 +356,7 @@ const quizRisk = () => quiz && page === 'quiz' && (quiz.index > 0 || quiz.answer
 function leaveQuiz(go) {
   if (quiz && page === 'quiz' && quizLast()) { quizJudge(quiz); save(); pushCloud(true); quiz = null; return go(); }
   if (!quizRisk()) return go();
-  const what = { stage: '節クリアの判定', boss: 'ボス戦の判定', daily: '「今日はこれだけ」の記録', review: '復習の残り', custom: '残りの問題' }[quiz.mode] || '判定';
+  const what = { stage: '節クリアの判定', boss: 'ボス戦の判定', daily: '「今日はこれだけ」の記録', mini: '「3問だけ」の記録', review: '復習の残り', custom: '残りの問題' }[quiz.mode] || '判定';
   modal('問題をやめますか？', `<p>${what}はやり直しになります</p><div class="button-row"><button class="button secondary" id="leave-stay">つづける</button><button class="button" id="leave-go">やめる</button></div>`);
   $('modal-close').hidden = true;
   $('leave-stay').onclick = () => closeModal();
@@ -381,12 +384,16 @@ function home() {
   const lv = level(), plan = todayPlan(), ph = phase(), rev = due().length, idle = idleDays();
   const h = new Date().getHours(), night = h >= 23 || h < 6, sleeping = night || idle >= 2;
   const doneToday = state.days.includes(today());
+  const cont = SECS.every(x => has(state.cleared, x.id)) ? null : nextSec, contQuiz = !!cont && has(state.read, cont.id) && unlockedSec(cont);
   const revN = Math.min(rev, ph.n === 4 ? 8 : 10);
   const bub = idle >= 2 ? 'ひさしぶり…' : night ? 'ねむい… zzz' : doneToday ? 'きょうも おつかれ！' : plan.left >= 0 ? `試験まで あと${plan.left}日` : 'がんばろう！';
   main(`
   <section class="yard dotsbg ${night ? 'night' : ''}">
     <div class="walker ${sleeping ? 'still' : ''}"><span class="kbub dot">${esc(bub)}</span><img class="pxi" id="home-kiko" src="${sleeping ? KIKO.png.tiny.sleep[0] : KIKO.png.walkRight[0]}" alt="キコちゃん"></div>
   </section>
+  ${cont ? `<button class="button big full" id="resume">${ic(contQuiz ? 'pencil' : 'book')}続きから<small>${esc(cont.chapter + '-' + cont.number + '. ' + cont.title)}（${contQuiz ? '問題' : '読む'}）</small></button>` : ''}
+  <div class="duo"><button class="button big" id="start-mini">${doneToday ? ic('check') : ic('sprout')}3問だけ<small>3問</small></button><button class="button pop big" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ic('pencil')}今日はこれだけ<small>10問</small></button></div>
+  <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
   <section class="panel">
     <div class="sh"><h2>キコちゃん Lv.${lv.level}</h2><span class="muted">${ic('cricket')}${state.crickets}匹</span></div>
     <div class="progress"><div style="width:${Math.round((state.crickets - lv.base) / (lv.next - lv.base) * 100)}%"></div></div>
@@ -394,24 +401,21 @@ function home() {
     <div class="stats">
       <div class="stat"><b class="dot">${plan.left >= 0 ? plan.left : '—'}</b><small>試験まで</small></div>
       <div class="stat"><b class="dot">${streak()}</b><small>連続</small></div>
-      <div class="stat"><b class="dot">${state.cleared.length}<i>/36</i></b><small>節クリア</small></div>
+      ${plan.notCleared || plan.doneToday ? `<div class="stat"><b class="dot">${plan.doneToday}<i>/${plan.perDay}</i></b><small>今日の節</small></div>` : `<div class="stat"><b class="dot">${state.cleared.length}<i>/${SECS.length}</i></b><small>節クリア</small></div>`}
     </div>
   </section>
-  <div class="duo"><button class="button big" id="start-text">${ic('book')}テキストを読む<small>${esc(nextSec ? nextSec.number + '. ' + nextSec.title : '')}</small></button><button class="button pop big" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ic('pencil')}今日はこれだけ<small>10問</small></button></div>
-  <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
   <button class="mini full" id="start-custom">${ic('pencil')}章と問題数をえらんで解く</button>
   <a class="mini full" id="open-sp" href="${spLink()}" ${/android|cros/i.test(navigator.userAgent) || isIOS ? '' : 'target="_blank" rel="noopener"'}>${ic('books')}Studyplus をひらく</a>
   <section class="panel strong">
     <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
-    <p>優先：<b class="nb">${chapterLabel(ph.chapters)}</b>${plan.notCleared && ph.n < 4 ? `<span class="muted nb"> ／ 目安 1日${plan.perDay}節</span>` : ''}</p>
-  </section>
-  ${state.lastSection && state.lastSection !== nextSec?.id ? `<button class="mini full" id="resume">${ic('book')}つづき：${esc(secBy(state.lastSection)?.title || '')}</button>` : ''}`);
+    <p>優先：<b class="nb">${chapterLabel(ph.chapters)}</b><span class="muted nb"> ／ 節クリア ${state.cleared.length}/${SECS.length}</span></p>
+  </section>`);
   const img = $('home-kiko');
   if (img) stopAnim = sleeping ? KIKO.play(img, KIKO.png.tiny.sleep, 440, 0) : KIKO.play(img, KIKO.png.walkRight, 220, 0);
   $('start-daily').onclick = () => startQuiz(dailyQuestions(), 'daily');
   $('start-custom').onclick = () => setPage('shiage');
-  $('start-text').onclick = () => nextSec && openLesson(nextSec.id, true);
-  if ($('resume')) $('resume').onclick = () => openLesson(state.lastSection);
+  $('start-mini').onclick = () => startQuiz(dailyQuestions().filter(q => !q.drill).slice(0, 3), 'mini');
+  if ($('resume')) $('resume').onclick = () => { if (!contQuiz) return openLesson(cont.id, true); state.lastSection = cont.id; save(); startQuiz(cont.questions.map(q => ({ ...q, section: cont })), 'stage', cont.id); };
 }
 
 // ---------- マップ ----------
@@ -420,7 +424,7 @@ function nextStudySec() {
   const ph = phase(), open = s => unlockedSec(s) && !has(state.cleared, s.id);
   return SECS.find(s => open(s) && (!ph.chapters || ph.chapters.includes(s.chapter))) || SECS.find(open) || secBy(state.lastSection) || SECS[0];
 }
-const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`);
+const unlockedSec = s => s.number === 1 || has(state.cleared, `${s.chapter}-${s.number - 1}`) || has(state.read, s.id); // 本文を開いた節も解ける
 function map() {
   const ph = phase();
   let html = '<h2>' + ic('map') + 'マップ</h2><p class="muted imp-note">' + ic('star') + '＝本の「でる度」（3つが一番よく出る）。本の目安で、実際の出題数を約束するものではありません</p>';
@@ -478,7 +482,7 @@ function fmtText(raw, inline) {
 }
 function lesson() {
   const s = secBy(sectionId); if (!s) return setPage('map');
-  const open = unlockedSec(s);
+  let open = unlockedSec(s);
   const hd = t => fmtText(esc(t));
   const parts = splitText(s), exs = examplesOf(s);
   const body = hd(parts.before) + (exs.length ? '<h4 class="tab"><span>例題</span></h4>' + exs.map(e => `<div class="excard" data-ex="${e.id}"><div class="exq"><b class="qno">例${e.n}</b><p>${fmtText(esc(e.stem), 1)}</p></div><button class="mini full" data-peek>答えを見る</button><div class="exa" hidden><p><b class="ans-h">答え</b>${fmtText(esc(e.ans), 1)}</p><div class="button-row"><button class="button secondary" data-grade="1">わかった</button><button class="button" data-grade="0">まちがえた</button></div></div></div>`).join('') : hd(parts.ex)) + hd(parts.after);
@@ -488,13 +492,14 @@ function lesson() {
     <div class="summary">${s.summary.map(t => `<p>${ic('sprout')}<span>${esc(tight(t))}</span></p>`).join('')}</div>${tatoeHtml(s)}
     <div class="button-row"><button id="toggle-text" class="button secondary">${ic('book')}読む</button><button id="stage-quiz" class="button" ${open ? '' : 'disabled'}>${ic('pencil')}${s.questions.length}問</button></div>
     <button class="mini full" id="qlist-open">${ic('books')}答えと解説の一覧</button>
-    ${open ? '' : '<p class="note">' + ic('lock') + '前の節をクリアすると解けます</p>'}
-    <div id="full-text" class="lesson-text" hidden>${body}${open ? `<button id="text-quiz" class="button full">${ic('pencil')}問題を解く</button>` : ''}</div>
+    ${open ? '' : '<p class="note" id="lock-note">' + ic('lock') + '読むと解けます</p>'}
+    <div id="full-text" class="lesson-text" hidden>${body}<button id="text-quiz" class="button full" ${open ? '' : 'hidden'}>${ic('pencil')}問題を解く</button></div>
     <div class="button-row" id="sec-nav"><button id="prev-section" class="button secondary">← 前</button><button id="next-section" class="button secondary">次 →</button></div>
   </div>`);
   $('toggle-text').onclick = () => {
     const el = $('full-text'); el.hidden = !el.hidden;
     if (!el.hidden && !has(state.read, s.id)) { state.read.push(s.id); save(); }
+    if (!open && unlockedSec(s)) { open = true; $('stage-quiz').disabled = false; $('text-quiz').hidden = false; if ($('lock-note')) $('lock-note').remove(); }
     $('toggle-text').innerHTML = ic('book') + (el.hidden ? '読む' : '閉じる');
     $('sec-nav').hidden = open && !el.hidden;
   };
@@ -504,7 +509,7 @@ function lesson() {
   });
   $('stage-quiz').onclick = () => startQuiz(s.questions.map(q => ({ ...q, section: s })), 'stage', s.id);
   $('qlist-open').onclick = () => openList(s.id);
-  if ($('text-quiz')) $('text-quiz').onclick = $('stage-quiz').onclick;
+  $('text-quiz').onclick = $('stage-quiz').onclick;
   const i = SECS.findIndex(a => a.id === s.id);
   $('prev-section').disabled = i === 0;
   $('prev-section').onclick = () => openLesson(SECS[i - 1].id);
@@ -530,7 +535,7 @@ function startBoss(id) {
   const pool = st.secs.flatMap(s => s.questions.map(q => ({ ...q, section: s })));
   startQuiz(shuffle(pool).slice(0, 10), 'boss', id);
 }
-const modeLabel = m => (ic({ boss: 'crown', daily: 'sun', review: 'loop', stage: 'pencil', custom: 'star' }[m]) + { boss: 'ボス戦', daily: '今日はこれだけ', review: '復習', stage: '節の問題', custom: 'えらんで解く' }[m]);
+const modeLabel = m => (ic({ boss: 'crown', daily: 'sun', mini: 'sprout', review: 'loop', stage: 'pencil', custom: 'star' }[m]) + { boss: 'ボス戦', daily: '今日はこれだけ', mini: '3問だけ', review: '復習', stage: '節の問題', custom: 'えらんで解く' }[m]);
 function quizView() {
   if (!quiz) return setPage('home');
   const q = quiz.questions[quiz.index]; if (!q) return quizFinish();
@@ -582,10 +587,11 @@ function quizJudge(qz) {
     else msg = pass ? 'クリア！' : '70%でクリア';
   }
   if (qz.mode === 'stage') {
-    if (pass && !has(state.cleared, qz.section)) { state.cleared.push(qz.section); msg = '節クリア！次の節がひらいたよ'; }
+    if (pass && !has(state.cleared, qz.section)) { state.cleared.push(qz.section); const d = today(); state.clearLog[d] = uniq([...(state.clearLog[d] || []), qz.section]); msg = '節クリア！次の節がひらいたよ'; }
     else if (!pass) msg = '3問正解でクリア';
   }
   if (qz.mode === 'daily') { if (!state.dailyDone.includes(today())) state.dailyDone.push(today()); markStreakDay(); msg = `連続 ${streak()}日`; }
+  if (qz.mode === 'mini') { markStreakDay(); msg = `連続 ${streak()}日`; }
   return { pass, msg };
 }
 function quizFinish() {
@@ -595,7 +601,7 @@ function quizFinish() {
   quiz = null; page = 'finish'; try { history.replaceState({ page: 'home' }, ''); } catch (_) {}
   const line = qz.mode === 'boss' ? (pass ? (msg.includes('エサ') ? 'ボスを たおした！ キコは とくべつな エサを もらった！' : 'ボスを たおした！') : 'ボスは つよかった… もういちど いどもう')
     : qz.mode === 'stage' ? (pass ? (msg.includes('ひらいた') ? 'せつ クリア！ つぎの せつが ひらいた！' : 'せつ クリア！') : 'あと すこし！ 3もん せいかいで クリア')
-    : qz.mode === 'daily' ? `きょうの ぶん おわり！ れんぞく ${streak()}にち！` : qz.mode === 'custom' ? `おつかれ！ ${qz.correctCount}もん せいかい！` : 'ふくしゅう おわり！';
+    : qz.mode === 'daily' || qz.mode === 'mini' ? `きょうの ぶん おわり！ れんぞく ${streak()}にち！` : qz.mode === 'custom' ? `おつかれ！ ${qz.correctCount}もん せいかい！` : 'ふくしゅう おわり！';
   main(`<h2 class="center">${modeLabel(qz.mode)}</h2><div class="score dot center">${qz.correctCount}<i>/${n}</i></div>
     <div class="rpg"><img class="pxi" id="finish-kiko" src="${KIKO.png.anim[pass ? 'dance' : 'awake'][0]}" alt=""><p id="rpg-msg"></p></div>
     <div class="button-row">${nextSec ? `<button class="button" id="quiz-next">次の節へ →</button>` : qz.mode === 'stage' ? `<button class="button" id="quiz-retry">もう一度</button>` : '<button class="button" id="quiz-home">ホーム</button>'}<button class="mini" id="quiz-map">マップ</button></div>`);
