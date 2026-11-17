@@ -387,14 +387,13 @@ function home() {
   const cont = SECS.every(x => has(state.cleared, x.id)) ? null : nextSec, contQuiz = !!cont && has(state.read, cont.id) && unlockedSec(cont);
   const revN = Math.min(rev, ph.n === 4 ? 8 : 10);
   const bub = idle >= 2 ? 'ひさしぶり…' : night ? 'ねむい… zzz' : doneToday ? 'きょうも おつかれ！' : plan.left >= 0 ? `試験まで あと${plan.left}日` : 'がんばろう！';
-  main(`
-  <section class="yard dotsbg ${night ? 'night' : ''}">
+  const chProg = CHAPS.map(c => { const ss = SECS.filter(x => x.chapter === c.id), d = ss.filter(x => has(state.cleared, x.id)).length;
+    return `<div class="cp"><div class="cp-h"><span>第${c.id}章 ${esc(c.title)}</span><span class="muted nb">${d}/${ss.length}</span></div><div class="progress"><div style="width:${ss.length ? Math.round(d / ss.length * 100) : 0}%"></div></div></div>`; }).join('');
+  main(`<div class="hgrid"><div class="hcol">
+  <section class="yard dotsbg o1 ${night ? 'night' : ''}">
     <div class="walker ${sleeping ? 'still' : ''}"><span class="kbub dot">${esc(bub)}</span><img class="pxi" id="home-kiko" src="${sleeping ? KIKO.png.tiny.sleep[0] : KIKO.png.walkRight[0]}" alt="キコちゃん"></div>
   </section>
-  ${cont ? `<button class="button big full" id="resume">${ic(contQuiz ? 'pencil' : 'book')}続きから<small>${esc(cont.chapter + '-' + cont.number + '. ' + cont.title)}（${contQuiz ? '問題' : '読む'}）</small></button>` : ''}
-  <div class="duo"><button class="button big" id="start-mini">${doneToday ? ic('check') : ic('sprout')}3問だけ<small>3問</small></button><button class="button pop big" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ic('pencil')}今日はこれだけ<small>10問</small></button></div>
-  <p class="muted center">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
-  <section class="panel">
+  <section class="panel o5">
     <div class="sh"><h2>キコちゃん Lv.${lv.level}</h2><span class="muted">${ic('cricket')}${state.crickets}匹</span></div>
     <div class="progress"><div style="width:${Math.round((state.crickets - lv.base) / (lv.next - lv.base) * 100)}%"></div></div>
     <p class="muted lvnote">次のLv.まで あと${lv.next - state.crickets}匹 ／ 次の脱皮まで あと${3 - (lv.level - 1) % 3}レベル${foodLeft() ? ` ／ ${ic('meat')}エサ ${foodLeft()}こ（おへやで あげられます）` : ''}</p>
@@ -404,12 +403,17 @@ function home() {
       ${plan.notCleared || plan.doneToday ? `<div class="stat"><b class="dot">${plan.doneToday}<i>/${plan.perDay}</i></b><small>今日の節</small></div>` : `<div class="stat"><b class="dot">${state.cleared.length}<i>/${SECS.length}</i></b><small>節クリア</small></div>`}
     </div>
   </section>
-  <button class="mini full" id="start-custom">${ic('pencil')}章と問題数をえらんで解く</button>
-  <a class="mini full" id="open-sp" href="${spLink()}" ${/android|cros/i.test(navigator.userAgent) || isIOS ? '' : 'target="_blank" rel="noopener"'}>${ic('books')}Studyplus をひらく</a>
-  <section class="panel strong">
+  </div><div class="hcol">
+  ${cont ? `<button class="button big full o2" id="resume">${ic(contQuiz ? 'pencil' : 'book')}続きから<small>${esc(cont.chapter + '-' + cont.number + '. ' + cont.title)}（${contQuiz ? '問題' : '読む'}）</small></button>` : ''}
+  <div class="duo o3"><button class="button big" id="start-mini">${doneToday ? ic('check') : ic('sprout')}3問だけ<small>3問</small></button><button class="button pop big" id="start-daily">${state.dailyDone.includes(today()) ? ic('check') : ic('pencil')}今日はこれだけ<small>10問</small></button></div>
+  <p class="muted center o4">復習 ${revN} ／ 新しい問題 ${10 - revN - (ph.n === 4 ? 2 : 0)}${ph.n === 4 ? ' ／ 計算 2' : ''}</p>
+  <section class="panel pc-only"><div class="sh"><h2>章ごとの進み具合</h2><span class="muted">節クリア ${state.cleared.length}/${SECS.length}</span></div><div class="chprog">${chProg}</div></section>
+  <div class="hbtns"><button class="mini full o6" id="start-custom">${ic('pencil')}章と問題数をえらんで解く</button>
+  <a class="mini full o7" id="open-sp" href="${spLink()}" ${/android|cros/i.test(navigator.userAgent) || isIOS ? '' : 'target="_blank" rel="noopener"'}>${ic('books')}Studyplus をひらく</a></div>
+  <section class="panel strong o8">
     <div class="sh"><h2>${ph.name}</h2><span class="muted">${esc(ph.note)}</span></div>
     <p>優先：<b class="nb">${chapterLabel(ph.chapters)}</b><span class="muted nb"> ／ 節クリア ${state.cleared.length}/${SECS.length}</span></p>
-  </section>`);
+  </section></div></div>`);
   const img = $('home-kiko');
   if (img) stopAnim = sleeping ? KIKO.play(img, KIKO.png.tiny.sleep, 440, 0) : KIKO.play(img, KIKO.png.walkRight, 220, 0);
   $('start-daily').onclick = () => startQuiz(dailyQuestions(), 'daily');
@@ -544,12 +548,12 @@ function quizView() {
   const choices = q.options.map((opt, i) => `<button class="choice ${show ? (i === q.answer ? 'correct' : i === quiz.answer ? 'wrong' : '') : ''}" data-answer="${i}" ${show ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(opt)}</button>`).join('');
   main(`<div class="section-top"><div><div class="label">${modeLabel(quiz.mode)}</div><h2>${q.drill ? ic('calc') + '計算' : esc(s.title)}</h2></div><span class="pill">${quiz.index + 1}/${quiz.questions.length}</span></div>
   <div class="progress"><div style="width:${quiz.index / quiz.questions.length * 100}%"></div></div>
-  <div class="question-card"><h3>${esc(q.stem)}</h3>
-    ${q.drill ? '<button class="button secondary small" id="calc-toggle">' + ic('calc') + '電卓</button><div id="calc-slot"></div>' : ''}
+  <div class="question-card qgrid"><div class="qside"><h3>${esc(q.stem)}</h3>
+    ${q.drill ? '<button class="button secondary small" id="calc-toggle">' + ic('calc') + '電卓</button><div id="calc-slot"></div>' : ''}</div><div class="qmain">
     <div class="choices">${choices}</div>
     ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain">${q.drill ? stepsHtml(q.explanation) : `<p class="pre">${esc(q.explanation)}</p>`}${q.drill ? tipHtml(q.tip) : `<button class="button secondary small" id="read-detail">${ic('book')}この節の解説</button>`}</div>
     <button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
-  </div>`);
+  </div></div>`);
   document.querySelectorAll('[data-answer]').forEach(b => b.onclick = () => answer(+b.dataset.answer));
   if (show) typeInto('rpg-msg', ok ? (q.drill ? 'せいかい！ キコは うれしそう！' : 'せいかい！ キコは コオロギを もらった！') : `ざんねん… せいかいは ${KANA[q.answer]} だよ`);
   if ($('calc-toggle')) $('calc-toggle').onclick = () => toggleCalc('calc-slot');
@@ -561,11 +565,11 @@ function exampleView(q) {
   const show = quiz.answered, ok = quiz.answer === 0, s = q.section;
   main(`<div class="section-top"><div><div class="label">${modeLabel(quiz.mode)}</div><h2>${esc(s.title)}</h2></div><span class="pill">${quiz.index + 1}/${quiz.questions.length}</span></div>
   <div class="progress"><div style="width:${quiz.index / quiz.questions.length * 100}%"></div></div>
-  <div class="question-card"><div class="label">例題</div><h3>${fmtText(esc(q.stem), 1)}</h3>
+  <div class="question-card qgrid"><div class="qside"><div class="label">例題</div><h3>${fmtText(esc(q.stem), 1)}</h3></div><div class="qmain">
     ${quiz.peek || show ? `<div class="explain"><p><b class="ans-h">答え</b>${fmtText(esc(q.ans), 1)}</p></div>` : '<button class="button full" id="peek">答えを見る</button>'}
     ${quiz.peek && !show ? '<div class="button-row"><button class="button secondary" data-self="1">わかった</button><button class="button" data-self="0">まちがえた</button></div>' : ''}
     ${show ? `<div class="rpg"><p id="rpg-msg"></p></div><button class="button full" id="next-q">${quiz.index + 1 < quiz.questions.length ? '次へ →' : '結果へ →'}</button>` : ''}
-  </div>`);
+  </div></div>`);
   if ($('peek')) $('peek').onclick = () => { quiz.peek = true; render(); };
   document.querySelectorAll('[data-self]').forEach(b => b.onclick = () => answer(b.dataset.self === '1' ? 0 : 1));
   if (!show) return;
@@ -805,12 +809,12 @@ function drillView() {
   main(`<h2>${ic('calc')}計算ドリル</h2>
   <div class="drill-types">${DRILLS.map(([id, t]) => `<button class="chip ${drill?.type === id ? 'on' : ''}" data-type="${id}">${esc(t)}</button>`).join('')}</div>
   <div class="seg"><button class="${inputMode ? '' : 'on'}" data-mode="0">4択</button><button class="${inputMode ? 'on' : ''}" data-mode="1">数字入力</button></div>
-  ${drill ? `<div class="question-card"><h3>${esc(drill.stem)}</h3>
+  ${drill ? `<div class="question-card qgrid"><div class="qside"><h3>${esc(drill.stem)}</h3></div><div class="qmain">
     ${useInput ? `<form class="numform" id="num-form"><input class="input" id="num-in" inputmode="decimal" autocomplete="off" placeholder="答え" value="${esc(drill.input || '')}" ${drill.done ? 'disabled' : ''}><button class="button" ${drill.done ? 'disabled' : ''}>答える</button></form>
     ${drill.done ? `<p class="numans ${drill.picked === drill.answer ? 'ok' : 'ng'}">答え ${esc(drill.options[drill.answer])}</p>` : ''}`
     : `<div class="choices">${drill.options.map((v, i) => `<button class="choice ${drill.done ? (i === drill.answer ? 'correct' : i === drill.picked ? 'wrong' : '') : ''}" data-opt="${i}" ${drill.done ? 'disabled' : ''}><b>${KANA[i]}</b>${esc(v)}</button>`).join('')}</div>`}
     ${drill.done ? `<div class="rpg"><p id="rpg-msg"></p></div><div class="explain">${stepsHtml(drill.explanation)}${tipHtml(drill.tip)}</div><button class="button full" id="again">次の問題 →</button>` : ''}
-  </div>` : '<p class="empty">分野を選んでね</p>'}
+  </div></div>` : '<p class="empty">分野を選んでね</p>'}
   <div class="button-row"><button class="button secondary" id="ntable">${ic('bar')}正規分布表</button><button class="button secondary" id="calc-toggle">${ic('calc')}電卓</button></div>
   <div id="calc-slot"></div>`);
   document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { drill = makeDrill(b.dataset.type); render(); });

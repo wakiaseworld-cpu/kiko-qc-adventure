@@ -258,3 +258,37 @@ details.chapter[open] .chev{transform:rotate(-135deg);margin-bottom:-4px}
 a.mini{display:flex;justify-content:center;align-items:center;gap:4px;text-decoration:none;margin-top:8px;box-sizing:border-box}
 #ptr{position:fixed;top:8px;left:50%;z-index:200;background:var(--surface);color:var(--ink);border:1px solid var(--ink);border-radius:999px;padding:6px 14px;font-size:.85rem;font-weight:700;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
 #ptr.ready{background:var(--ink);color:var(--ink-fg)}
+
+/* パソコン版：スマホは今のまま。画面が広いときだけ広げる */
+.hgrid,.hcol,.hbtns,.qgrid>.qside,.qgrid>.qmain{display:contents}
+.hcol>*,.hbtns>*{margin:0}
+.o1{order:1}.o2{order:2}.o3{order:3}.o4{order:4}.o5{order:5}.o6{order:6}.o7{order:7}.o8{order:8}
+.pc-only{display:none}
+.chprog{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 22px;margin-top:6px}
+.cp{font-size:.82rem}.cp-h{display:flex;justify-content:space-between;gap:8px}.cp .progress{margin:3px 0 4px}
+@media (min-width:900px){
+  main{max-width:1180px;padding:22px 28px 28px;gap:18px}
+  .topnav{padding-inline:max(4px,calc((100% - 1180px)/2))}
+  .hgrid{display:grid;grid-template-columns:minmax(300px,400px) minmax(0,1fr);gap:18px;align-items:start}
+  .hcol{display:flex;flex-direction:column;gap:16px}
+  .hcol>*{order:0}
+  .hbtns{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .hbtns>a.mini{margin:0}
+  .pc-only{display:block}
+  .yard{height:250px}
+  .walker.still img{width:120px}.walker.still{left:calc(50% - 60px)}
+  .walker img{width:96px}
+  .button.big{min-height:96px}
+  #resume{min-height:120px;font-size:1.15rem}
+  .qgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:24px;align-items:start;padding:22px}
+  .qgrid>.qside,.qgrid>.qmain{display:block}
+  .qgrid>.qside h3{font-size:1.1rem;line-height:1.8}
+  .qgrid .choices{margin-top:0}
+  body[data-page=map] main,body[data-page=shiage] main,body[data-page=settings] main,body[data-page=room] main{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+  body[data-page=map] main>h2,body[data-page=map] main>p,body[data-page=shiage] main>h2,body[data-page=settings] main>h2,body[data-page=room] main>h2,body[data-page=room] main>.button-row,body[data-page=room] main>p{grid-column:1/-1}
+  body[data-page=room] main>.button-row{margin:0}
+  body[data-page=review] .stage-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+  body[data-page=lesson] main{max-width:900px}
+  body[data-page=finish] main{max-width:760px}
+  .modal{max-width:720px}
+}
